@@ -1,17 +1,25 @@
 /*
-Vrekrer_scpi_parser library.
+
 Control code for Enfyf Detector board
-uses Vrekrer SCPI library to parse commands
+
+Dave Langstaff, Aberystwyth University
+dpl@aber.ac.uk
+
 
 Commands:
   *IDN?
     Gets the instrument's identification string
   DOut# xxx
-    Sets DAC # to value xxx, where # is in the range of 0..1 and xxx is in the range 0..4095
-  AIn#?
-    Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
+    Sets DAC # to value xxx,
+       # is DAC chnnel [0..1]
+       xxx is value to set [0..4095]
+  AIn#? 
+    Reads ADC value from ADC
+    # is ADC channel [0..7]
+    12bit return Value [0..4095]
   OS xxx
-    Sets oversampling to 2^xxx, where x is in the range 0 to 10 corresponding to oversampling of 1,2,4,8...1024
+    Sets oversampling to 2^xxx,
+    x is oversampling order [0..10] giving sample size of is in the range 0 to 10 giving [1,2,4,8...1024] samples
   OS?
     Returns current level of oversampling
 */
