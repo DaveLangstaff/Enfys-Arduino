@@ -1,27 +1,24 @@
 /*
-
+Vrekrer_scpi_parser library.
 Control code for Enfyf Detector board
-
-Dave Langstaff, Aberystwyth University
-dpl@aber.ac.uk
-
+uses Vrekrer SCPI library to parse commands
 
 Commands:
   *IDN?
     Gets the instrument's identification string
   DOut# xxx
-    Sets DAC # to value xxx,
-       # is DAC chnnel [0..1]
-       xxx is value to set [0..4095]
-  AIn#? 
-    Reads ADC value from ADC
-    # is ADC channel [0..7]
-    12bit return Value [0..4095]
+    Sets DAC # to value xxx, where # is in the range of 0..1 and xxx is in the range 0..4095
+  AIn#?
+    Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
+    This is the sum of a buffer full of readings, as set by OS
   OS xxx
-    Sets oversampling to 2^xxx,
-    x is oversampling order [0..10] giving sample size of is in the range 0 to 10 giving [1,2,4,8...1024] samples
+    Sets oversampling to 2^xxx, where x is in the range 0 to 10 corresponding to oversampling of 1,2,4,8...1024
   OS?
     Returns current level of oversampling
+  PO:ON Turns power off
+  PO:OFF Turns power on
+  BURST#? - takes reading and returns whole dataBuffer, length as set by OS
+  TIME? - returns time in usec for last read operation
 */
 
 
@@ -39,13 +36,19 @@ Commands:
 #define DAC0_CS  8 //cs
 #define TRIG   7 // Trigger for scope
 
+#define POWER3V3 A7 // enable pin for 3v3 power
+#define POWER12V A6 // enable pin for 12v power
+
 #define ClockSpeed 1000000   //1MHz SPI clock
 #define serialSpeed 115200     // serial baud rate
 unsigned int DAC0_value=0;
 unsigned int DAC1_value=0;
 byte OSLevel=0;
 unsigned int OSvalue=1;
+unsigned int sampleDelay=0;
 
+unsigned int dataBuffer[1024];
+unsigned long Elapsed;
 
 SCPI_Parser my_instrument;
 
@@ -57,20 +60,32 @@ void setup()
   my_instrument.RegisterCommand(F("AIn#?"), &ReadADC);
   //my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
   my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
-  my_instrument.RegisterCommand(F("DOut#?"), &ReadDAC);
   my_instrument.RegisterCommand(F("OS"), &setOS);  
-  my_instrument.RegisterCommand(F("OS?"), &getOS);  
+  my_instrument.RegisterCommand(F("OS?"), &getOS);
+  my_instrument.RegisterCommand(F("POwer:ON"), &PowerOn);
+  my_instrument.RegisterCommand(F("POwer:OFF"), &PowerOff);
+  my_instrument.RegisterCommand(F("TIME?"), &getElapsed);
+  my_instrument.RegisterCommand(F("BURST#?"), &ReadADCBurst);
+  my_instrument.RegisterCommand(F("DELAY"), &setsampleDelay);
+  my_instrument.RegisterCommand(F("DELAY?"), &getsampleDelay);
+    
   
   Serial.begin(serialSpeed);
+
+  // setup SPI bus
   pinMode(DATAOUT, OUTPUT); 
   pinMode(SPICLOCK,OUTPUT);
-  SPI.begin();
-
   pinMode(DAC0_CS,OUTPUT); digitalWrite(DAC0_CS,HIGH);
   pinMode(DAC1_CS,OUTPUT); digitalWrite(DAC1_CS,HIGH);
   pinMode(TRIG,OUTPUT);  digitalWrite(TRIG,HIGH);
   pinMode(ADC_CS,OUTPUT);  digitalWrite(ADC_CS,HIGH);
   pinMode(DATAIN, INPUT);
+  SPI.begin();
+    
+  // setup pins for power rail control
+  pinMode(POWER3V3, OUTPUT); digitalWrite(POWER3V3, LOW);
+  pinMode(POWER12V, OUTPUT); digitalWrite(POWER12V, LOW);
+  pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
 }
 
@@ -89,6 +104,20 @@ void Identify(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 void DoNothing(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
+void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    digitalWrite(POWER12V, HIGH);     // turn ON 12V power
+    delay(2);
+    digitalWrite(POWER3V3, HIGH);    // turn ON 3v3 power
+    digitalWrite(LED_BLUE, LOW);
+}
+
+void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    digitalWrite(POWER3V3, LOW);    // turn OFF 3v3 power
+    delay(1);                       // wait 1ms
+    digitalWrite(POWER12V, LOW);    // turn OFF 12v power
+    digitalWrite(LED_BLUE, HIGH);
+}
+
 void trigger() {
   digitalWrite(TRIG, LOW);  //put negative pulse on Trigger line
   digitalWrite(TRIG, HIGH);
@@ -104,9 +133,27 @@ void setOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   OSvalue = (1 << OSLevel);
 }
 
+void setsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  int param = -1;
+  String first_parameter = String(parameters.First());
+  sscanf(first_parameter.c_str(),"%d",&param) ;
+  sampleDelay=constrain(param,0,1023);
+}
+
 void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
   interface.println(OSLevel);
+}
+
+void getElapsed(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  interface.println(Elapsed);
+}
+
+void getsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  interface.println(sampleDelay);
 }
 
 void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -123,8 +170,6 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     String first_parameter = String(parameters.First());
     sscanf(first_parameter.c_str(),"%d",&param) ;
     param=constrain(param,0,4095);
-    uint8_t byteLow = param & 0xff;
-    uint8_t byteHigh = ((param >> 8) & 0x0f);
     trigger();
     SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
       if (suffix==0) {
@@ -136,8 +181,7 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
       DAC1_value=param;
     }
     delayMicroseconds(10);
-    SPI.transfer(byteHigh);
-    SPI.transfer(byteLow);
+    SPI.transfer16(param);
     if (suffix==0) {
       digitalWrite(DAC0_CS, HIGH);
     }
@@ -171,13 +215,29 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
         else {
           param=DAC1_value;
           }
-  interface.println(param);
+/*    interface.print("DAC");interface.print(suffix);
+    interface.print(", Value: ");interface.print("0x");
+*/    interface.println(param);
   }
 }
 
+void ReadADCtoBuffer(int chan){
+    trigger();
+    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
+    unsigned long startTime = micros();
+    digitalWrite(ADC_CS, LOW);
+    for (int i=0;i<OSvalue;i++){
+        uint16_t control = chan << 11;
+        dataBuffer[i] = SPI.transfer16(control);
+        delayMicroseconds(sampleDelay);
+    }
+    digitalWrite(ADC_CS,HIGH);
+    Elapsed = micros() - startTime;
+    SPI.endTransaction();
+  }
+
 void ReadADC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  unsigned long reading;
-  uint16_t buffer;
+  unsigned long summation=0;
   //Get the numeric suffix/index (if any) from the commands
   String header = String(commands.Last());
   header.toUpperCase();
@@ -185,32 +245,29 @@ void ReadADC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   sscanf(header.c_str(),"%*[AIN]%u", &chan);
   //If the suffix is valid,
   if ( (chan >= 0) && (chan < 8) ) {
-    //use the first parameter (if valid) to set the digital Output  
-    // read from ADC128 chip. Transfers channel number to the chip first and reads back data
-    trigger();
-    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
-    reading=0;
+    ReadADCtoBuffer(chan);
     for (int i=0;i<OSvalue;i++){
-// Read for 16 bit transfer
-        digitalWrite(ADC_CS, LOW);
-        uint16_t control = chan << 11;
-        buffer = SPI.transfer16(control);
-        digitalWrite(ADC_CS,HIGH);
-//
-/* Read for 8 bit transfer
-        digitalWrite(ADC_CS, LOW);
-        uint16_t control = chan << 3;
-        buffer = SPI.transfer(control);
-        buffer = buffer << 8;
-        buffer = buffer | SPI.transfer(0);
-        digitalWrite(ADC_CS,HIGH);
-*/
-        reading += buffer;
+        summation += dataBuffer[i];
     }
-//    interface.print("AI");interface.print(chan); interface.print(" :");
-    interface.println(reading);
-//    interface.println(micros());
-    SPI.endTransaction();
+    interface.println(summation);
+  }
+}
+
+void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //Get the numeric suffix/index (if any) from the commands
+  String header = String(commands.Last());
+  header.toUpperCase();
+  int chan = -1;
+  sscanf(header.c_str(),"%*[BURST]%u", &chan);
+  //If the suffix is valid,
+  if ( (chan >= 0) && (chan < 8) ) {
+    ReadADCtoBuffer(chan);
+    int i;
+    for (i=0;i<(OSvalue-1);i++){
+        interface.print(dataBuffer[i]);
+        interface.print(",");
+    }
+    interface.println(dataBuffer[i]);
   }
 }
 
