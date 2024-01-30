@@ -221,15 +221,16 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 void ReadADCtoBuffer(int chan){
     trigger();
     SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
-    unsigned long startTime = micros();
+    uint16_t control = chan << 11;  // set control word to point to ADC channel
+    unsigned long startTime = micros();  // record start time
     digitalWrite(ADC_CS, LOW);
+    dataBuffer[0] = SPI.transfer16(control);  // dummy read, will be overwritten in loop
     for (int i=0;i<OSvalue;i++){
-        uint16_t control = chan << 11;
         dataBuffer[i] = SPI.transfer16(control);
         delayMicroseconds(sampleDelay);
     }
     digitalWrite(ADC_CS,HIGH);
-    Elapsed = micros() - startTime;
+    Elapsed = micros() - startTime;      // calculted elapsed time
     SPI.endTransaction();
   }
 
