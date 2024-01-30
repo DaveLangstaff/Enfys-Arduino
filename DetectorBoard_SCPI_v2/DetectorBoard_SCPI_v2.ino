@@ -12,7 +12,7 @@ Commands:
     Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
     This is the sum of a buffer full of readings, as set by OS
   OS xxx
-    Sets oversampling to 2^xxx, where x is in the range 0 to 10 corresponding to oversampling of 1,2,4,8...1024
+    Sets oversampling to xxx where xxx is the number of samples to take, in the range 1..1024
   OS?
     Returns current level of oversampling
   PO:ON Turns power off
@@ -43,7 +43,7 @@ Commands:
 #define serialSpeed 115200     // serial baud rate
 unsigned int DAC0_value=0;
 unsigned int DAC1_value=0;
-byte OSLevel=0;
+//byte OSLevel=0;
 unsigned int OSvalue=1;
 unsigned int sampleDelay=0;
 
@@ -128,9 +128,13 @@ void setOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  param=constrain(param,0,10);
-  OSLevel = byte(param);
-  OSvalue = (1 << OSLevel);
+  param=constrain(param,1,1024);
+  OSvalue = param;
+}
+
+void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  interface.println(OSvalue);
 }
 
 void setsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -139,11 +143,6 @@ void setsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
   sampleDelay=constrain(param,0,1023);
-}
-
-void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  //use the first parameter to set the oversampling level
-  interface.println(OSLevel);
 }
 
 void getElapsed(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -215,9 +214,7 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
         else {
           param=DAC1_value;
           }
-/*    interface.print("DAC");interface.print(suffix);
-    interface.print(", Value: ");interface.print("0x");
-*/    interface.println(param);
+  interface.println(param);
   }
 }
 
