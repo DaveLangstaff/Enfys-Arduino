@@ -21,6 +21,9 @@ Commands:
   TIME? - returns time in usec for last read operation
   THROW - Sets number of readings to throw away at start of each burst
   THROW? - Gets number of readings to throw away at start of each burst
+
+  all commands will return either the requested data (? commands) 
+  or an error code indicating successful or otherwise completion
 */
 
 
@@ -44,8 +47,11 @@ Commands:
 #define ClockSpeed 1000000   //1MHz SPI clock
 #define serialSpeed 115200     // serial baud rate
 #define MaxDataSize 2000
+#define MaxSampleDelay 1024     // maximum delay in usec between samples
+#define MaxThrowAway 1024       // Maximum number of samples to throw away
 unsigned int DAC0_value=0;
 unsigned int DAC1_value=0;
+
 //byte OSLevel=0;
 unsigned int OSvalue=1;
 unsigned int sampleDelay=0;
@@ -53,6 +59,14 @@ unsigned int sampleDelay=0;
 unsigned int dataBuffer[MaxDataSize];
 unsigned long Elapsed;
 int throwAway = 1;    // number of readings to throwaway before accumulating in buffer
+
+// define errors codes to return
+#define ERR_NO_ERROR 0
+#define ERR_BAD_COMMAND -1
+#define ERR_TIMEOUT -2
+#define ERR_BUFF_OVERFLOW -3
+#define ERR_BAD_SUFFIX -4
+#define ERR_BAD_PARAM -5
 
 SCPI_Parser my_instrument;
 
@@ -70,11 +84,12 @@ void setup()
   my_instrument.RegisterCommand(F("POwer:OFF"), &PowerOff);
   my_instrument.RegisterCommand(F("TIME?"), &getElapsed);
   my_instrument.RegisterCommand(F("BURST#?"), &ReadADCBurst);
-  my_instrument.RegisterCommand(F("DELAY"), &setsampleDelay);
-  my_instrument.RegisterCommand(F("DELAY?"), &getsampleDelay);
+  my_instrument.RegisterCommand(F("DELAY"), &setSampleDelay);
+  my_instrument.RegisterCommand(F("DELAY?"), &getSampleDelay);
   my_instrument.RegisterCommand(F("THROW"), &setThrowAway);
   my_instrument.RegisterCommand(F("THROW?"), &getThrowAway);
-    
+  my_instrument.SetErrorHandler(&myErrorHandler);
+  
   
   Serial.begin(serialSpeed);
 
@@ -91,6 +106,7 @@ void setup()
   // setup pins for power rail control
   pinMode(POWER3V3, OUTPUT); digitalWrite(POWER3V3, LOW);
   pinMode(POWER12V, OUTPUT); digitalWrite(POWER12V, LOW);
+  // Blue LED used as power indicator. Start turned OFF, turns on with POWER:ON command
   pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
 }
@@ -99,6 +115,68 @@ void loop()
 {
   my_instrument.ProcessInput(Serial, "\n");
 }
+
+
+void GetLastEror(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  switch(my_instrument.last_error){
+    case my_instrument.ErrorCode::BufferOverflow: 
+      interface.println(ERR_BUFF_OVERFLOW);
+      break;
+    case my_instrument.ErrorCode::Timeout:
+      interface.println(ERR_TIMEOUT);
+      break;
+    case my_instrument.ErrorCode::UnknownCommand:
+      interface.println(ERR_BAD_COMMAND);
+      break;
+    case my_instrument.ErrorCode::NoError:
+      interface.println(ERR_NO_ERROR);
+      break;
+  }
+  my_instrument.last_error = my_instrument.ErrorCode::NoError;
+}
+
+void myErrorHandler(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //This function is called every time an error occurs
+
+  /* The error type is stored in my_instrument.last_error
+     Possible errors are:
+       SCPI_Parser::ErrorCode::NoError
+       SCPI_Parser::ErrorCode::UnknownCommand
+       SCPI_Parser::ErrorCode::Timeout
+       SCPI_Parser::ErrorCode::BufferOverflow
+  */
+
+  /* For BufferOverflow errors, the rest of the message, still in the interface
+  buffer or not yet received, will be processed later and probably 
+  trigger another kind of error.
+  Here we flush the incomming message*/
+  switch(my_instrument.last_error){
+    case my_instrument.ErrorCode::BufferOverflow: 
+      delay(2);
+      while (interface.available()) {
+        delay(2);
+        interface.read();
+      }
+      interface.println(ERR_BUFF_OVERFLOW);
+      break;
+    case my_instrument.ErrorCode::Timeout:
+      interface.println(ERR_TIMEOUT);
+      break;
+    case my_instrument.ErrorCode::UnknownCommand:
+      interface.println(ERR_BAD_COMMAND);
+      break;
+    case my_instrument.ErrorCode::NoError:
+      interface.println(ERR_NO_ERROR);
+      break;
+  }
+  my_instrument.last_error = my_instrument.ErrorCode::NoError;
+
+  /*
+  For UnknownCommand errors, you can get the received unknown command and
+  parameters from the commands and parameters variables.
+  */
+}
+
 
 void Identify(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(F("Aberystwyth University,Enfys Detector,#01," VREKRER_SCPI_VERSION));
@@ -115,6 +193,7 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     delay(2);
     digitalWrite(POWER3V3, HIGH);    // turn ON 3v3 power
     digitalWrite(LED_BLUE, LOW);
+    interface.println(ERR_NO_ERROR);
 }
 
 void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -122,6 +201,7 @@ void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     delay(1);                       // wait 1ms
     digitalWrite(POWER12V, LOW);    // turn OFF 12v power
     digitalWrite(LED_BLUE, HIGH);
+    interface.println(ERR_NO_ERROR);
 }
 
 void trigger() {
@@ -134,7 +214,12 @@ void setThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  throwAway=constrain(param,1,MaxDataSize);
+  if ((param>1) && (param<=MaxThrowAway)){
+    throwAway=constrain(param,1,MaxThrowAway);
+    interface.println(ERR_NO_ERROR);
+  }  else {
+    interface.println(ERR_BAD_PARAM);
+  }
 }
 void getThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
@@ -146,7 +231,12 @@ void setOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  OSvalue=constrain(param,1,MaxDataSize);
+  if ((param>1) && (param<=MaxDataSize)){
+    OSvalue=constrain(param,1,MaxDataSize);
+    interface.println(ERR_NO_ERROR);
+  }  else {
+    interface.println(ERR_BAD_PARAM);
+  }
 }
 
 
@@ -155,12 +245,18 @@ void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(OSvalue);
 }
 
-void setsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+
+void setSampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  sampleDelay=constrain(param,0,1023);
+  if ((param>0) && (param<=MaxSampleDelay)){
+    sampleDelay=constrain(param,0,MaxSampleDelay);
+    interface.println(ERR_NO_ERROR);
+  }  else {
+    interface.println(ERR_BAD_PARAM);
+  }
 }
 
 void getElapsed(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -168,7 +264,7 @@ void getElapsed(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(Elapsed);
 }
 
-void getsampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+void getSampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
   interface.println(sampleDelay);
 }
@@ -186,27 +282,33 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     int param = -1;
     String first_parameter = String(parameters.First());
     sscanf(first_parameter.c_str(),"%d",&param) ;
+    if ((param>0)&&(param<=4095)) {
     param=constrain(param,0,4095);
     trigger();
     SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
-      if (suffix==0) {
-      digitalWrite(DAC0_CS, LOW);
-      DAC0_value=param;
-    }
-    else {
-      digitalWrite(DAC1_CS, LOW);
-      DAC1_value=param;
-    }
-    delayMicroseconds(10);
-    SPI.transfer16(param);
-    if (suffix==0) {
-      digitalWrite(DAC0_CS, HIGH);
-    }
-    else {
-      digitalWrite(DAC1_CS, HIGH);
+    switch (suffix) {
+      case 0:
+        digitalWrite(DAC0_CS, LOW);
+        DAC0_value=param;
+        delayMicroseconds(10);
+        SPI.transfer16(param);
+        digitalWrite(DAC0_CS, HIGH);
+        break;
+      case 1:
+        digitalWrite(DAC1_CS, LOW);
+        DAC1_value=param;
+        delayMicroseconds(10);
+        SPI.transfer16(param);
+        digitalWrite(DAC1_CS, HIGH);
     }
     delayMicroseconds(5);
     SPI.endTransaction();
+    interface.println(ERR_NO_ERROR);
+    } else{
+      interface.println(ERR_BAD_PARAM);
+    }
+  } else {
+    interface.println(ERR_BAD_SUFFIX);
   }
 }
 
@@ -227,6 +329,8 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
           param=DAC1_value;
           }
   interface.println(param);
+  } else {
+    interface.println(ERR_BAD_SUFFIX);
   }
 }
 
@@ -263,7 +367,10 @@ void ReadADC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
         summation += dataBuffer[i];
     }
     interface.println(summation);
+  } else {
+    interface.println(ERR_BAD_SUFFIX);
   }
+
 }
 
 void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -281,6 +388,8 @@ void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
         interface.print(",");
     }
     interface.println(dataBuffer[i]);
+  } else {
+    interface.println(ERR_BAD_SUFFIX);
   }
 }
 
