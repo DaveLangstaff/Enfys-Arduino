@@ -12,13 +12,15 @@ Commands:
     Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
     This is the sum of a buffer full of readings, as set by OS
   OS xxx
-    Sets oversampling to xxx where xxx is the number of samples to take, in the range 1..1024
+    Sets oversampling to xxx where xxx is the number of samples to take, in the range 1..MaxDataSize
   OS?
     Returns current level of oversampling
   PO:ON Turns power off
   PO:OFF Turns power on
   BURST#? - takes reading and returns whole dataBuffer, length as set by OS
   TIME? - returns time in usec for last read operation
+  THROW - Sets number of readings to throw away at start of each burst
+  THROW? - Gets number of readings to throw away at start of each burst
 */
 
 
@@ -41,14 +43,16 @@ Commands:
 
 #define ClockSpeed 1000000   //1MHz SPI clock
 #define serialSpeed 115200     // serial baud rate
+#define MaxDataSize 2000
 unsigned int DAC0_value=0;
 unsigned int DAC1_value=0;
 //byte OSLevel=0;
 unsigned int OSvalue=1;
 unsigned int sampleDelay=0;
 
-unsigned int dataBuffer[1024];
+unsigned int dataBuffer[MaxDataSize];
 unsigned long Elapsed;
+int throwAway = 1;    // number of readings to throwaway before accumulating in buffer
 
 SCPI_Parser my_instrument;
 
@@ -68,6 +72,8 @@ void setup()
   my_instrument.RegisterCommand(F("BURST#?"), &ReadADCBurst);
   my_instrument.RegisterCommand(F("DELAY"), &setsampleDelay);
   my_instrument.RegisterCommand(F("DELAY?"), &getsampleDelay);
+  my_instrument.RegisterCommand(F("THROW"), &setThrowAway);
+  my_instrument.RegisterCommand(F("THROW?"), &getThrowAway);
     
   
   Serial.begin(serialSpeed);
@@ -123,14 +129,26 @@ void trigger() {
   digitalWrite(TRIG, HIGH);
 }
 
+void setThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  int param = -1;
+  String first_parameter = String(parameters.First());
+  sscanf(first_parameter.c_str(),"%d",&param) ;
+  throwAway=constrain(param,1,MaxDataSize);
+}
+void getThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  interface.println(throwAway);
+}
+
 void setOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  param=constrain(param,1,1024);
-  OSvalue = param;
+  OSvalue=constrain(param,1,MaxDataSize);
 }
+
 
 void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
@@ -189,12 +207,6 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     }
     delayMicroseconds(5);
     SPI.endTransaction();
-/*    interface.print("DAC");interface.print(suffix);
-    interface.print(", Value: ");interface.print("0x");
-    interface.print(byteHigh,HEX); interface.print("-"); interface.print(byteLow,HEX);
-    interface.print("  ");
-    interface.println(param);
-*/
   }
 }
 
@@ -222,9 +234,12 @@ void ReadADCtoBuffer(int chan){
     trigger();
     SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
-    unsigned long startTime = micros();  // record start time
     digitalWrite(ADC_CS, LOW);
-    dataBuffer[0] = SPI.transfer16(control);  // dummy read, will be overwritten in loop
+    // throwaway readings first
+    for (int i=0;i<throwAway;i++){
+      dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
+    }
+    unsigned long startTime = micros();  // record start time
     for (int i=0;i<OSvalue;i++){
         dataBuffer[i] = SPI.transfer16(control);
         delayMicroseconds(sampleDelay);
