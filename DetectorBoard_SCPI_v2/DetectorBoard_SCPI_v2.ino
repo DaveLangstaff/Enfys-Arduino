@@ -282,33 +282,34 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     int param = -1;
     String first_parameter = String(parameters.First());
     sscanf(first_parameter.c_str(),"%d",&param) ;
-    if ((param>0)&&(param<=4095)) {
-    param=constrain(param,0,4095);
-    trigger();
-    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
-    switch (suffix) {
-      case 0:
-        digitalWrite(DAC0_CS, LOW);
-        DAC0_value=param;
-        delayMicroseconds(10);
-        SPI.transfer16(param);
-        digitalWrite(DAC0_CS, HIGH);
-        break;
-      case 1:
-        digitalWrite(DAC1_CS, LOW);
-        DAC1_value=param;
-        delayMicroseconds(10);
-        SPI.transfer16(param);
-        digitalWrite(DAC1_CS, HIGH);
-    }
-    delayMicroseconds(5);
-    SPI.endTransaction();
-    interface.println(ERR_NO_ERROR);
+    if ((param>0)&&(param<=4095)) {  // if the parameter is in range, then set the DAC
+      param=constrain(param,0,4095);
+      trigger();
+      SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
+      switch (suffix) {
+        case 0:
+          digitalWrite(DAC0_CS, LOW);
+          DAC0_value=param;
+          delayMicroseconds(10);
+          SPI.transfer16(param);
+          digitalWrite(DAC0_CS, HIGH);
+          break;
+        case 1:
+          digitalWrite(DAC1_CS, LOW);
+          DAC1_value=param;
+          delayMicroseconds(10);
+          SPI.transfer16(param);
+          digitalWrite(DAC1_CS, HIGH);
+          break;
+      }
+      delayMicroseconds(5);
+      SPI.endTransaction();
+      interface.println(ERR_NO_ERROR);
     } else{
-      interface.println(ERR_BAD_PARAM);
+      interface.println(ERR_BAD_PARAM);  // if paramter is out of range, print error code
     }
   } else {
-    interface.println(ERR_BAD_SUFFIX);
+    interface.println(ERR_BAD_SUFFIX);    // if suffix is out of range, print error code
   }
 }
 
