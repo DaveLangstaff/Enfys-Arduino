@@ -58,7 +58,7 @@ unsigned int sampleDelay=0;
 
 unsigned int dataBuffer[MaxDataSize];
 unsigned long Elapsed;
-int throwAway = 1;    // number of readings to throwaway before accumulating in buffer
+int throwAway = 0;    // number of readings to throwaway before accumulating in buffer
 
 // define errors codes to return
 #define ERR_NO_ERROR 0
@@ -214,8 +214,8 @@ void setThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  if ((param>1) && (param<=MaxThrowAway)){
-    throwAway=constrain(param,1,MaxThrowAway);
+  if ((param>=0) && (param<=MaxThrowAway)){
+    throwAway=constrain(param,0,MaxThrowAway);
     interface.println(ERR_NO_ERROR);
   }  else {
     interface.println(ERR_BAD_PARAM);
@@ -231,7 +231,7 @@ void setOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  if ((param>1) && (param<=MaxDataSize)){
+  if ((param>=1) && (param<=MaxDataSize)){
     OSvalue=constrain(param,1,MaxDataSize);
     interface.println(ERR_NO_ERROR);
   }  else {
@@ -355,7 +355,6 @@ void ReadADCtoBuffer(int chan){
   }
 
 void ReadADC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  unsigned long summation=0;
   //Get the numeric suffix/index (if any) from the commands
   String header = String(commands.Last());
   header.toUpperCase();
@@ -363,6 +362,7 @@ void ReadADC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   sscanf(header.c_str(),"%*[AIN]%u", &chan);
   //If the suffix is valid,
   if ( (chan >= 0) && (chan < 8) ) {
+    unsigned long summation=0;
     ReadADCtoBuffer(chan);
     for (int i=0;i<OSvalue;i++){
         summation += dataBuffer[i];
@@ -384,7 +384,7 @@ void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   if ( (chan >= 0) && (chan < 8) ) {
     ReadADCtoBuffer(chan);
     int i;
-    for (i=0;i<(OSvalue-1);i++){
+    for (i=0;i<OSvalue;i++){
         interface.print(dataBuffer[i]);
         interface.print(",");
     }
@@ -393,4 +393,3 @@ void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     interface.println(ERR_BAD_SUFFIX);
   }
 }
-
