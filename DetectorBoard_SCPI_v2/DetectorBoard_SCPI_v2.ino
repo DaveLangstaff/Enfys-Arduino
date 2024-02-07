@@ -384,7 +384,7 @@ void ReadADCBurst(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   if ( (chan >= 0) && (chan < 8) ) {
     ReadADCtoBuffer(chan);
     int i;
-    for (i=0;i<OSvalue;i++){
+    for (i=0;i<(OSvalue-1);i++){
         interface.print(dataBuffer[i]);
         interface.print(",");
     }
