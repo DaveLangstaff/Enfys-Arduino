@@ -330,6 +330,10 @@
     [
       "1623af86-153e-4a4a-ad6c-bb96ed494b45",
       "PowerSupplies"
+    ],
+    [
+      "37a5f408-3396-481c-a671-82032be19745",
+      "BoardHeater"
     ]
   ],
   "text_variables": {}
