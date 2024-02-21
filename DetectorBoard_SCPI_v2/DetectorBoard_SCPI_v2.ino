@@ -32,25 +32,34 @@ Commands:
 //#include "ADC128S102.h"
 
 #include <SPI.h>
+#include <INA.h>  // Zanshin INA Library for INA238 and INA3221 devices used for current monitoring
+#include <Adafruit_MAX31865.h>
 
-#define SPICLOCK 13//sck
-#define DATAIN   12//CIPO
-#define DATAOUT  11//COPI
-#define ADC_CS  10//cs
-#define DAC1_CS  9 //cs
-#define DAC0_CS  8 //cs
-#define TRIG   7 // Trigger for scope
 
-#define POWER3V3 A7 // enable pin for 3v3 power
-#define POWER12V A6 // enable pin for 12v power
+#define DETEC_SCK   13//sck
+#define DETEC_MISO  12//CIPO
+#define DETEC_MOSI  11//COPI
+#define DETEC_ADC_CS  10//cs
+#define MWIR_DAC_CS  9 //cs
+#define SWIR_DAC_CS  8 //cs
+#define HTR_DAC_CS   7 // DAC for board heater current control
+#define HTR_EN       6 // Enable board heater supply
+#define RTD_MON_CS   5 // Enable for board temperature monitor
+#define TRIG         4 // Trigger for scope
+
+#define INA238_ADDR  0x45 // Current monitor for -12V supply
+#define INA3221_ADDR 0x40 // Current monitor for +12, +3v3 and heater supplies
+
+#define EN_3V3      A7 // enable pin for 3v3 power
+#define EN_12V      A6 // enable pin for 12v power
 
 #define ClockSpeed 1000000   //1MHz SPI clock
 #define serialSpeed 115200     // serial baud rate
 #define MaxDataSize 2000
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
 #define MaxThrowAway 1024       // Maximum number of samples to throw away
-unsigned int DAC0_value=0;
-unsigned int DAC1_value=0;
+unsigned int SWIR_DAC_Value=0;
+unsigned int MWIR_DAC_Value=0;
 
 //byte OSLevel=0;
 unsigned int OSvalue=1;
@@ -94,18 +103,18 @@ void setup()
   Serial.begin(serialSpeed);
 
   // setup SPI bus
-  pinMode(DATAOUT, OUTPUT); 
-  pinMode(SPICLOCK,OUTPUT);
-  pinMode(DAC0_CS,OUTPUT); digitalWrite(DAC0_CS,HIGH);
-  pinMode(DAC1_CS,OUTPUT); digitalWrite(DAC1_CS,HIGH);
+  pinMode(DETEC_MOSI, OUTPUT); 
+  pinMode(DETEC_SCK,OUTPUT);
+  pinMode(SWIR_DAC_CS,OUTPUT); digitalWrite(SWIR_DAC_CS,HIGH);
+  pinMode(MWIR_DAC_CS,OUTPUT); digitalWrite(MWIR_DAC_CS,HIGH);
   pinMode(TRIG,OUTPUT);  digitalWrite(TRIG,HIGH);
-  pinMode(ADC_CS,OUTPUT);  digitalWrite(ADC_CS,HIGH);
-  pinMode(DATAIN, INPUT);
+  pinMode(DETEC_ADC_CS,OUTPUT);  digitalWrite(DETEC_ADC_CS,HIGH);
+  pinMode(DETEC_MISO, INPUT);
   SPI.begin();
     
   // setup pins for power rail control
-  pinMode(POWER3V3, OUTPUT); digitalWrite(POWER3V3, LOW);
-  pinMode(POWER12V, OUTPUT); digitalWrite(POWER12V, LOW);
+  pinMode(EN_3V3, OUTPUT); digitalWrite(EN_3V3, LOW);
+  pinMode(EN_12V, OUTPUT); digitalWrite(EN_12V, LOW);
   // Blue LED used as power indicator. Start turned OFF, turns on with POWER:ON command
   pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
@@ -189,17 +198,17 @@ void DoNothing(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(POWER12V, HIGH);     // turn ON 12V power
+    digitalWrite(EN_12V, HIGH);     // turn ON 12V power
     delay(2);
-    digitalWrite(POWER3V3, HIGH);    // turn ON 3v3 power
+    digitalWrite(EN_3V3, HIGH);    // turn ON 3v3 power
     digitalWrite(LED_BLUE, LOW);
     interface.println(ERR_NO_ERROR);
 }
 
 void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(POWER3V3, LOW);    // turn OFF 3v3 power
+    digitalWrite(EN_3V3, LOW);    // turn OFF 3v3 power
     delay(1);                       // wait 1ms
-    digitalWrite(POWER12V, LOW);    // turn OFF 12v power
+    digitalWrite(EN_12V, LOW);    // turn OFF 12v power
     digitalWrite(LED_BLUE, HIGH);
     interface.println(ERR_NO_ERROR);
 }
@@ -288,18 +297,18 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
       SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
       switch (suffix) {
         case 0:
-          digitalWrite(DAC0_CS, LOW);
-          DAC0_value=param;
+          digitalWrite(SWIR_DAC_CS, LOW);
+          SWIR_DAC_Value=param;
           delayMicroseconds(10);
           SPI.transfer16(param);
-          digitalWrite(DAC0_CS, HIGH);
+          digitalWrite(SWIR_DAC_CS, HIGH);
           break;
         case 1:
-          digitalWrite(DAC1_CS, LOW);
-          DAC1_value=param;
+          digitalWrite(MWIR_DAC_CS, LOW);
+          MWIR_DAC_Value=param;
           delayMicroseconds(10);
           SPI.transfer16(param);
-          digitalWrite(DAC1_CS, HIGH);
+          digitalWrite(MWIR_DAC_CS, HIGH);
           break;
       }
       delayMicroseconds(5);
@@ -324,10 +333,10 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //If the suffix is valid,
   if ( (suffix >= 0) && (suffix < 2) ) {
         if (suffix==0) {
-          param=DAC0_value;
+          param=SWIR_DAC_Value;
           }
         else {
-          param=DAC1_value;
+          param=MWIR_DAC_Value;
           }
   interface.println(param);
   } else {
@@ -339,7 +348,7 @@ void ReadADCtoBuffer(int chan){
     trigger();
     SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
-    digitalWrite(ADC_CS, LOW);
+    digitalWrite(DETEC_ADC_CS, LOW);
     // throwaway readings first
     for (int i=0;i<throwAway;i++){
       dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
@@ -349,7 +358,7 @@ void ReadADCtoBuffer(int chan){
         dataBuffer[i] = SPI.transfer16(control);
         delayMicroseconds(sampleDelay);
     }
-    digitalWrite(ADC_CS,HIGH);
+    digitalWrite(DETEC_ADC_CS,HIGH);
     Elapsed = micros() - startTime;      // calculted elapsed time
     SPI.endTransaction();
   }
