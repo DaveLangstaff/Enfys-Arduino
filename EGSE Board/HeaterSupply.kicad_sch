@@ -576,7 +576,7 @@
     (effects (font (size 2.54 2.54)) (justify right bottom))
     (uuid 5f26cf5d-e943-4bd0-91f5-4959beb312b8)
   )
-  (text "DAC driven from 3v3 supply\nresistor chosen such that 3.3v on\nDAC output gives 12.15V at output\n300R heater resistors give 40.5mA"
+  (text "DAC driven from 3v3 supply\nresistor chosen such that 3.3v on\nDAC output gives 12.15V at output\n300R heater resistors give 40.5mA (0.55W)\n"
     (at 83.82 96.52 0)
     (effects (font (size 1.27 1.27)) (justify right bottom))
     (uuid 70f0dae2-59b0-426c-933d-6e2e440ab45d)
