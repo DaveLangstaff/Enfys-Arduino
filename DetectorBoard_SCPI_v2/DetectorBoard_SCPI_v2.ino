@@ -28,6 +28,13 @@ Commands:
 
 
 #include "Arduino.h"
+
+// SCPI Parser constants
+#define SCPI_MAX_TOKENS 20 
+#define SCPI_ARRAY_SYZE 6 
+#define SCPI_MAX_COMMANDS 30
+#define SCPI_HASH_TYPE uint16_t
+
 #include "Vrekrer_scpi_parser.h"
 //#include "ADC128S102.h"
 
@@ -47,8 +54,15 @@ Commands:
 #define RTD_MON_CS   5 // Enable for board temperature monitor
 #define TRIG         4 // Trigger for scope
 
+// IN238 and INA3221 current monitors are both on the I2C bus
 #define INA238_ADDR  0x45 // Current monitor for -12V supply
 #define INA3221_ADDR 0x40 // Current monitor for +12, +3v3 and heater supplies
+#define SHUNT_1R 1000000  // 1 ohm resistor in microohms
+#define SHUNT_0R1 100000  // 0.1 ohm shunt resistor
+#define MAX_AMPS 0.1      // 100mA maximum current for current monitoring
+uint8_t        devicesFound{0};          ///< Number of INAs found
+INA_Class      INA;                      ///< INA class instantiation to use EEPROM
+
 
 #define EN_3V3      A7 // enable pin for 3v3 power
 #define EN_12V      A6 // enable pin for 12v power
@@ -58,8 +72,13 @@ Commands:
 #define MaxDataSize 2000
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
 #define MaxThrowAway 1024       // Maximum number of samples to throw away
-unsigned int SWIR_DAC_Value=0;
-unsigned int MWIR_DAC_Value=0;
+unsigned int SWIR_DAC_Value=0;  // DAC for SWIR offset
+unsigned int MWIR_DAC_Value=0;  // DAC for MWIR offset
+unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
+
+Adafruit_MAX31865 RTD_Monitor = Adafruit_MAX31865(RTD_MON_CS);  // define RTD monitor object
+#define RREF 4020.0
+#define RNOMINAL 1000.0    // PT1000 sensor
 
 //byte OSLevel=0;
 unsigned int OSvalue=1;
@@ -77,26 +96,38 @@ int throwAway = 0;    // number of readings to throwaway before accumulating in 
 #define ERR_BAD_SUFFIX -4
 #define ERR_BAD_PARAM -5
 
+
 SCPI_Parser my_instrument;
 
 void setup()
 {
  my_instrument.RegisterCommand(F("*IDN?"), &Identify);
+ my_instrument.RegisterCommand(F("*DBG"), &PrintDebug);
 
   //Use "#" at the end of a token to accept numeric suffixes.
   my_instrument.RegisterCommand(F("AIn#?"), &ReadADC);
-  //my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
   my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
   my_instrument.RegisterCommand(F("OS"), &setOS);  
   my_instrument.RegisterCommand(F("OS?"), &getOS);
-  my_instrument.RegisterCommand(F("POwer:ON"), &PowerOn);
-  my_instrument.RegisterCommand(F("POwer:OFF"), &PowerOff);
+  my_instrument.RegisterCommand(F("CURR#?"), &getCurrent);
+  my_instrument.RegisterCommand(F("VBUS#?"), &getVBus);
+  my_instrument.RegisterCommand(F("NAME#?"), &getName);
   my_instrument.RegisterCommand(F("TIME?"), &getElapsed);
   my_instrument.RegisterCommand(F("BURST#?"), &ReadADCBurst);
   my_instrument.RegisterCommand(F("DELAY"), &setSampleDelay);
   my_instrument.RegisterCommand(F("DELAY?"), &getSampleDelay);
   my_instrument.RegisterCommand(F("THROW"), &setThrowAway);
   my_instrument.RegisterCommand(F("THROW?"), &getThrowAway);
+  my_instrument.SetCommandTreeBase(F("HTR"));
+  my_instrument.RegisterCommand(F(":ON"), &HTROn);
+  my_instrument.RegisterCommand(F(":OFF"), &HTROff);
+  my_instrument.RegisterCommand(F(":DAC"), &setHTRDAC);
+  my_instrument.RegisterCommand(F(":DAC?"), &getHTRDAC);
+  my_instrument.SetCommandTreeBase(F("POwer"));
+  my_instrument.RegisterCommand(F(":ON"), &PowerOn);
+  my_instrument.RegisterCommand(F(":OFF"), &PowerOff);
+  my_instrument.SetCommandTreeBase(F("RTD"));
+  my_instrument.RegisterCommand(F(":TEMP?"), &getRTDTemperature);
   my_instrument.SetErrorHandler(&myErrorHandler);
   
   
@@ -118,11 +149,34 @@ void setup()
   // Blue LED used as power indicator. Start turned OFF, turns on with POWER:ON command
   pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
+  // pins for heater control
+  pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, LOW);    // HTR enable pin, active high
+  pinMode(HTR_DAC_CS, OUTPUT); digitalWrite(HTR_DAC_CS, HIGH);  // HTR DAC enab le, active low
+
+  // setup RTD monitor
+  RTD_Monitor.begin(MAX31865_2WIRE);
+
+  /* set up current monitoring 
+  channels are:
+  1: INA3221_0, 3v3 supply, 1 ohm, 10mA
+  2: INA3221_1, Heater supply, 0.1 ohm, 100mA
+  3: INA3221_2, +12V supply, 0.1 ohm, 100mA
+  4: INA238, -12V supply, 0.1 ohm, 100mA
+  */
+INA.begin(0.01,SHUNT_1R, 1);
+INA.begin(0.1,SHUNT_0R1, 2);
+INA.begin(0.1,SHUNT_0R1, 3);
+INA.begin(0.1,SHUNT_0R1, 4);
+
 }
 
 void loop()
 {
   my_instrument.ProcessInput(Serial, "\n");
+}
+
+void PrintDebug(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  my_instrument.PrintDebugInfo(interface);
 }
 
 
@@ -211,6 +265,96 @@ void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(EN_12V, LOW);    // turn OFF 12v power
     digitalWrite(LED_BLUE, HIGH);
     interface.println(ERR_NO_ERROR);
+}
+
+void HTROn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    digitalWrite(HTR_EN, HIGH);
+    interface.println(ERR_NO_ERROR);
+}
+
+void HTROff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    digitalWrite(HTR_EN, LOW);
+    interface.println(ERR_NO_ERROR);
+}
+
+void getVBus(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //get bus voltage from indicated channel
+  String header = String(commands.Last());
+  header.toUpperCase();
+  int suffix = -1;
+  sscanf(header.c_str(),"%*[VBUS]%u?", &suffix);
+  //If the suffix is valid,
+  if ( (suffix >= 1) && (suffix <= 4) ) {
+    interface.println(INA.getBusMilliVolts(suffix));
+  }
+  else{
+  interface.println(ERR_BAD_SUFFIX);
+  }
+} 
+
+void getCurrent(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //get bus voltage from indicated channel
+  //interface.println("getCurrent...");
+  String header = String(commands.Last());
+  header.toUpperCase();
+  int suffix = 1;
+  //interface.println(header);
+  sscanf(header.c_str(),"%*[CURR]%u?", &suffix);
+  //If the suffix is valid,
+  if ( (suffix >= 1) && (suffix <= 4) ) {
+    interface.println(INA.getBusMicroAmps(suffix));
+  }
+  else{
+  interface.println(ERR_BAD_SUFFIX);
+  }
+} 
+
+
+
+void getName(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //get bus voltage from indicated channel
+  String header = String(commands.Last());
+  header.toUpperCase();
+  int suffix = -1;
+  sscanf(header.c_str(),"%*[NAME]%u?", &suffix);
+
+  //If the suffix is valid,
+  if ( (suffix >= 1) && (suffix <= 4) ) {
+    interface.println(INA.getDeviceName(suffix));
+  }
+  else{
+  interface.println(ERR_BAD_SUFFIX);
+  }
+} 
+
+void setHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the 12-bit heater DAC
+  int param = -1;
+  String first_parameter = String(parameters.First());
+  sscanf(first_parameter.c_str(),"%d",&param) ;
+  // check parameter is in range
+  if ((param>=0) && (param<=4095)){
+    HTR_DAC_Value=constrain(param,0,4095);   // store the value away
+    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
+    digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
+    HTR_DAC_Value=param;
+    delayMicroseconds(10);
+    SPI.transfer16(param);                   // use 16-bit mode to transfer DAC data
+    digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
+    interface.println(ERR_NO_ERROR);         // return success code
+  }  else {
+    interface.println(ERR_BAD_PARAM);        // otherwise return out of range error
+  }
+}
+
+void getHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //get current value set on Heater DAC
+  interface.println(HTR_DAC_Value);
+}
+
+void getRTDTemperature(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  // read temperature sensor and return as float
+  interface.println(RTD_Monitor.temperature(RNOMINAL,RREF));
 }
 
 void trigger() {
