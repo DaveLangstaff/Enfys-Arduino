@@ -67,14 +67,17 @@ INA_Class      INA;                      ///< INA class instantiation to use EEP
 #define EN_3V3      A7 // enable pin for 3v3 power
 #define EN_12V      A6 // enable pin for 12v power
 
-#define ClockSpeed 1000000   //1MHz SPI clock
+#define ClockSpeed 1000000   //1MHz SPI clock (default)
+#define minClk 100000     // 100KHz minimum clock
+#define maxClk 10000000   // 10MHz maximum clock
 #define serialSpeed 115200     // serial baud rate
-#define MaxDataSize 2000
+#define MaxDataSize 4096
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
 #define MaxThrowAway 1024       // Maximum number of samples to throw away
 unsigned int SWIR_DAC_Value=0;  // DAC for SWIR offset
 unsigned int MWIR_DAC_Value=0;  // DAC for MWIR offset
 unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
+unsigned int ClkSpeed;
 
 Adafruit_MAX31865 RTD_Monitor = Adafruit_MAX31865(RTD_MON_CS);  // define RTD monitor object
 #define RREF 4020.0
@@ -102,13 +105,15 @@ SCPI_Parser my_instrument;
 void setup()
 {
  my_instrument.RegisterCommand(F("*IDN?"), &Identify);
- my_instrument.RegisterCommand(F("*DBG"), &PrintDebug);
+ my_instrument.RegisterCommand(F("*DBG?"), &PrintDebug);
 
   //Use "#" at the end of a token to accept numeric suffixes.
   my_instrument.RegisterCommand(F("AIn#?"), &ReadADC);
   my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
   my_instrument.RegisterCommand(F("OS"), &setOS);  
   my_instrument.RegisterCommand(F("OS?"), &getOS);
+  my_instrument.RegisterCommand(F("CLK"), &setClk);  
+  my_instrument.RegisterCommand(F("CLK?"), &getClk);
   my_instrument.RegisterCommand(F("CURR#?"), &getCurrent);
   my_instrument.RegisterCommand(F("VBUS#?"), &getVBus);
   my_instrument.RegisterCommand(F("NAME#?"), &getName);
@@ -134,6 +139,7 @@ void setup()
   Serial.begin(serialSpeed);
 
   // setup SPI bus
+  ClkSpeed = ClockSpeed;
   pinMode(DETEC_MOSI, OUTPUT); 
   pinMode(DETEC_SCK,OUTPUT);
   pinMode(SWIR_DAC_CS,OUTPUT); digitalWrite(SWIR_DAC_CS,HIGH);
@@ -150,8 +156,16 @@ void setup()
   pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
   // pins for heater control
-  pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, LOW);    // HTR enable pin, active high
+  pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, HIGH);    // HTR enable pin, active LOW
   pinMode(HTR_DAC_CS, OUTPUT); digitalWrite(HTR_DAC_CS, HIGH);  // HTR DAC enab le, active low
+  // set heater DAC to 0
+  SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
+  digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
+  HTR_DAC_Value=0;
+  delayMicroseconds(10);
+  SPI.transfer16(0);                   // use 16-bit mode to transfer DAC data
+  digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
+  SPI.endTransaction();
 
   // setup RTD monitor
   RTD_Monitor.begin(MAX31865_2WIRE);
@@ -167,7 +181,10 @@ INA.begin(0.01,SHUNT_1R, 1);
 INA.begin(0.1,SHUNT_0R1, 2);
 INA.begin(0.1,SHUNT_0R1, 3);
 INA.begin(0.1,SHUNT_0R1, 4);
-
+INA.setBusConversion(8500);             // Maximum conversion time 8.244ms
+INA.setShuntConversion(8500);           // Maximum conversion time 8.244ms
+INA.setAveraging(8);                  // Average each reading n-times
+INA.setMode(INA_MODE_CONTINUOUS_BOTH);  // Bus/shunt measured continuously
 }
 
 void loop()
@@ -176,7 +193,28 @@ void loop()
 }
 
 void PrintDebug(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+
+  static char     sprintfBuffer[100];  // Buffer to format output
+  static char     busChar[8], shuntChar[10], busMAChar[10], busMWChar[10];  // Output buffers
+
   my_instrument.PrintDebugInfo(interface);
+  interface.print("INA current monitors:");
+  interface.println(devicesFound);
+  Serial.print(F("Nr Adr Type   Bus      Shunt       Bus         Bus\n"));
+  Serial.print(F("== === ====== ======== =========== =========== ===========\n"));
+  for (uint8_t i = 0; i < 4; i++)  // Loop through all devices
+  {
+    dtostrf(INA.getBusMilliVolts(i) / 1000.0, 7, 4, busChar);      // Convert floating point to char
+    dtostrf(INA.getShuntMicroVolts(i) / 1000.0, 9, 4, shuntChar);  // Convert floating point to char
+    dtostrf(INA.getBusMicroAmps(i) / 1000.0, 9, 4, busMAChar);     // Convert floating point to char
+    dtostrf(INA.getBusMicroWatts(i) / 1000.0, 9, 4, busMWChar);    // Convert floating point to char
+    sprintf(sprintfBuffer, "%2d %3d %s %sV %smV %smA %smW\n", i + 1, INA.getDeviceAddress(i),
+            INA.getDeviceName(i), busChar, shuntChar, busMAChar, busMWChar);
+    Serial.print(sprintfBuffer);
+  }  // for-next each INA device loop
+  Serial.println();
+  
+
 }
 
 
@@ -253,7 +291,7 @@ void DoNothing(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(EN_12V, HIGH);     // turn ON 12V power
-    delay(2);
+    //delay(2);
     digitalWrite(EN_3V3, HIGH);    // turn ON 3v3 power
     digitalWrite(LED_BLUE, LOW);
     interface.println(ERR_NO_ERROR);
@@ -261,19 +299,19 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(EN_3V3, LOW);    // turn OFF 3v3 power
-    delay(1);                       // wait 1ms
+    //delay(1);                       // wait 1ms
     digitalWrite(EN_12V, LOW);    // turn OFF 12v power
     digitalWrite(LED_BLUE, HIGH);
     interface.println(ERR_NO_ERROR);
 }
 
 void HTROn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(HTR_EN, HIGH);
+    digitalWrite(HTR_EN, LOW);
     interface.println(ERR_NO_ERROR);
 }
 
 void HTROff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(HTR_EN, LOW);
+    digitalWrite(HTR_EN, HIGH);
     interface.println(ERR_NO_ERROR);
 }
 
@@ -284,7 +322,7 @@ void getVBus(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int suffix = -1;
   sscanf(header.c_str(),"%*[VBUS]%u?", &suffix);
   //If the suffix is valid,
-  if ( (suffix >= 1) && (suffix <= 4) ) {
+  if ( (suffix >= 0) && (suffix <= 3) ) {
     interface.println(INA.getBusMilliVolts(suffix));
   }
   else{
@@ -301,7 +339,7 @@ void getCurrent(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //interface.println(header);
   sscanf(header.c_str(),"%*[CURR]%u?", &suffix);
   //If the suffix is valid,
-  if ( (suffix >= 1) && (suffix <= 4) ) {
+  if ( (suffix >= 0) && (suffix <= 3) ) {
     interface.println(INA.getBusMicroAmps(suffix));
   }
   else{
@@ -335,12 +373,13 @@ void setHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   // check parameter is in range
   if ((param>=0) && (param<=4095)){
     HTR_DAC_Value=constrain(param,0,4095);   // store the value away
-    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
+    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
     digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
     HTR_DAC_Value=param;
     delayMicroseconds(10);
     SPI.transfer16(param);                   // use 16-bit mode to transfer DAC data
     digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
+    SPI.endTransaction();
     interface.println(ERR_NO_ERROR);         // return success code
   }  else {
     interface.println(ERR_BAD_PARAM);        // otherwise return out of range error
@@ -398,6 +437,25 @@ void getOS(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(OSvalue);
 }
 
+void setClk(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  int param = -1;
+  String first_parameter = String(parameters.First());
+  sscanf(first_parameter.c_str(),"%d",&param) ;
+  if ((param>=minClk) && (param<=maxClk)){
+    ClkSpeed=constrain(param,minClk,maxClk);
+    interface.println(ERR_NO_ERROR);
+  }  else {
+    interface.println(ERR_BAD_PARAM);
+  }
+}
+
+
+void getClk(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+  //use the first parameter to set the oversampling level
+  interface.println(ClkSpeed);
+}
+
 
 void setSampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //use the first parameter to set the oversampling level
@@ -438,7 +496,7 @@ void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     if ((param>0)&&(param<=4095)) {  // if the parameter is in range, then set the DAC
       param=constrain(param,0,4095);
       trigger();
-      SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE1));
+      SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
       switch (suffix) {
         case 0:
           digitalWrite(SWIR_DAC_CS, LOW);
@@ -490,7 +548,7 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 void ReadADCtoBuffer(int chan){
     trigger();
-    SPI.beginTransaction(SPISettings(ClockSpeed, MSBFIRST, SPI_MODE0));
+    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
     digitalWrite(DETEC_ADC_CS, LOW);
     // throwaway readings first
