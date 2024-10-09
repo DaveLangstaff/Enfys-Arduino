@@ -25,12 +25,12 @@ Commands:
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.1,"
 
 #include "Arduino.h"
 
 // SCPI Parser constants
-#define SCPI_MAX_TOKENS 20 
+#define SCPI_MAX_TOKENS 40 
 #define SCPI_ARRAY_SYZE 6 
 #define SCPI_MAX_COMMANDS 30
 #define SCPI_HASH_TYPE uint16_t
@@ -53,12 +53,14 @@ Commands:
 #define HTR_EN       6 // Enable board heater supply
 #define RTD_MON_CS   5 // Enable for board temperature monitor
 #define TRIG         4 // Trigger for scope
+#define TRIG2        3 // Trigger for light source
 
 // IN238 and INA3221 current monitors are both on the I2C bus
 #define INA238_ADDR  0x45 // Current monitor for -12V supply
 #define INA3221_ADDR 0x40 // Current monitor for +12, +3v3 and heater supplies
 #define SHUNT_1R 1000000  // 1 ohm resistor in microohms
 #define SHUNT_0R1 100000  // 0.1 ohm shunt resistor
+#define SHUNT_0R15 150000  // 0.1 ohm shunt resistor
 #define MAX_AMPS 0.1      // 100mA maximum current for current monitoring
 uint8_t        devicesFound{0};          ///< Number of INAs found
 INA_Class      INA;                      ///< INA class instantiation to use EEPROM
@@ -69,11 +71,11 @@ INA_Class      INA;                      ///< INA class instantiation to use EEP
 
 #define ClockSpeed 1000000   //1MHz SPI clock (default)
 #define minClk 100000     // 100KHz minimum clock
-#define maxClk 10000000   // 10MHz maximum clock
+#define maxClk 16000000   // 16MHz maximum clock
 #define serialSpeed 115200     // serial baud rate
 #define MaxDataSize 4096
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
-#define MaxThrowAway 1024       // Maximum number of samples to throw away
+#define MaxThrowAway 4096       // Maximum number of samples to throw away
 unsigned int SWIR_DAC_Value=0;  // DAC for SWIR offset
 unsigned int MWIR_DAC_Value=0;  // DAC for MWIR offset
 unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
@@ -104,6 +106,10 @@ SCPI_Parser my_instrument;
 
 void setup()
 {
+
+ Serial.begin(serialSpeed);
+ //delay(5000);
+
  my_instrument.RegisterCommand(F("*IDN?"), &Identify);
  my_instrument.RegisterCommand(F("*DBG?"), &PrintDebug);
 
@@ -135,8 +141,7 @@ void setup()
   my_instrument.RegisterCommand(F(":TEMP?"), &getRTDTemperature);
   my_instrument.SetErrorHandler(&myErrorHandler);
   
-  
-  Serial.begin(serialSpeed);
+  //Serial.println("Commands registered");
 
   // setup SPI bus
   ClkSpeed = ClockSpeed;
@@ -145,10 +150,15 @@ void setup()
   pinMode(SWIR_DAC_CS,OUTPUT); digitalWrite(SWIR_DAC_CS,HIGH);
   pinMode(MWIR_DAC_CS,OUTPUT); digitalWrite(MWIR_DAC_CS,HIGH);
   pinMode(TRIG,OUTPUT);  digitalWrite(TRIG,HIGH);
+  pinMode(TRIG2,OUTPUT);  digitalWrite(TRIG2,LOW);
   pinMode(DETEC_ADC_CS,OUTPUT);  digitalWrite(DETEC_ADC_CS,HIGH);
   pinMode(DETEC_MISO, INPUT);
+  //Serial.println("Pins allocated");
+
   SPI.begin();
-    
+  //Serial.println("SPI started");
+
+  
   // setup pins for power rail control
   pinMode(EN_3V3, OUTPUT); digitalWrite(EN_3V3, LOW);
   pinMode(EN_12V, OUTPUT); digitalWrite(EN_12V, LOW);
@@ -157,7 +167,7 @@ void setup()
 
   // pins for heater control
   pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, HIGH);    // HTR enable pin, active LOW
-  pinMode(HTR_DAC_CS, OUTPUT); digitalWrite(HTR_DAC_CS, HIGH);  // HTR DAC enab le, active low
+  pinMode(HTR_DAC_CS, OUTPUT); digitalWrite(HTR_DAC_CS, HIGH);  // HTR DAC enable, active low
   // set heater DAC to 0
   SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
   digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
@@ -166,9 +176,11 @@ void setup()
   SPI.transfer16(0);                   // use 16-bit mode to transfer DAC data
   digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
   SPI.endTransaction();
+  //Serial.println("Heater DAC initialised");
 
   // setup RTD monitor
   RTD_Monitor.begin(MAX31865_2WIRE);
+  //Serial.println("RTD Monitor initialised");
 
   /* set up current monitoring 
   channels are:
@@ -177,14 +189,23 @@ void setup()
   3: INA3221_2, +12V supply, 0.1 ohm, 100mA
   4: INA238, -12V supply, 0.1 ohm, 100mA
   */
-INA.begin(0.01,SHUNT_1R, 1);
-INA.begin(0.1,SHUNT_0R1, 2);
-INA.begin(0.1,SHUNT_0R1, 3);
-INA.begin(0.1,SHUNT_0R1, 4);
+//Serial.println("INA0 begins");
+INA.begin(1,SHUNT_1R, 0);
+
+//Serial.println("INA1 begins");
+INA.begin(1,SHUNT_0R1, 1);
+
+//Serial.println("INA2 begins");
+INA.begin(1,SHUNT_0R1, 2);
+
+//Serial.println("INA3 begins");
+INA.begin(1,SHUNT_0R1, 3);
 INA.setBusConversion(8500);             // Maximum conversion time 8.244ms
 INA.setShuntConversion(8500);           // Maximum conversion time 8.244ms
-INA.setAveraging(8);                  // Average each reading n-times
+INA.setAveraging(20);                  // Average each reading n-times
 INA.setMode(INA_MODE_CONTINUOUS_BOTH);  // Bus/shunt measured continuously
+//Serial.println("INA all set up");
+
 }
 
 void loop()
@@ -200,6 +221,7 @@ void PrintDebug(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   my_instrument.PrintDebugInfo(interface);
   interface.print("INA current monitors:");
   interface.println(devicesFound);
+  //Serial.println(INA.getShuntMicroVolts(3));
   Serial.print(F("Nr Adr Type   Bus      Shunt       Bus         Bus\n"));
   Serial.print(F("== === ====== ======== =========== =========== ===========\n"));
   for (uint8_t i = 0; i < 4; i++)  // Loop through all devices
@@ -280,7 +302,7 @@ void myErrorHandler(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 
 void Identify(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  interface.println(F("Aberystwyth University,Enfys Detector,#01," VREKRER_SCPI_VERSION));
+  interface.println(F(ID_STRING VREKRER_SCPI_VERSION));
   //*IDN? Suggested return string should be in the following format:
   // "<vendor>,<model>,<serial number>,<firmware>"
   trigger();
@@ -399,6 +421,8 @@ void getRTDTemperature(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 void trigger() {
   digitalWrite(TRIG, LOW);  //put negative pulse on Trigger line
   digitalWrite(TRIG, HIGH);
+  digitalWrite(TRIG2, HIGH);  //put positive pulse on Trigger2 line
+  digitalWrite(TRIG2, LOW);
 }
 
 void setThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -550,17 +574,20 @@ void ReadADCtoBuffer(int chan){
     trigger();
     SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
-    digitalWrite(DETEC_ADC_CS, LOW);
     // throwaway readings first
     for (int i=0;i<throwAway;i++){
+    digitalWrite(DETEC_ADC_CS, LOW);
       dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
+    digitalWrite(DETEC_ADC_CS, HIGH);
     }
     unsigned long startTime = micros();  // record start time
     for (int i=0;i<OSvalue;i++){
+        digitalWrite(DETEC_ADC_CS, LOW);
         dataBuffer[i] = SPI.transfer16(control);
         delayMicroseconds(sampleDelay);
+        digitalWrite(DETEC_ADC_CS, HIGH);
     }
-    digitalWrite(DETEC_ADC_CS,HIGH);
+//    digitalWrite(DETEC_ADC_CS,HIGH);
     Elapsed = micros() - startTime;      // calculted elapsed time
     SPI.endTransaction();
   }

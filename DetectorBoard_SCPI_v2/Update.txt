@@ -1,0 +1,15 @@
+Moved ID & version string to top of file for ease of use.
+Increased MAX_TOKENS in SCPI parser
+Defined TRIG2 to work with BNC connector added to EGSE board
+Defined 0R15 ohm shunt resistor for INA devices
+Increased oversample and throwaway maximums to 4096
+Added ClkSpeed variable along with SetClkSpeed() and GetCLkspeed functions as well as CLK and CLK? commands for SCPI parser.
+Used ClkSpeed rather than Clockspeed throughout
+Moved Serial.begin() to start of setup() to allow debug info to be printed during boot
+Changed HTR_EN to be active LOW
+Changed setup of INA devices to allow debug printing and also to set conversion times etc.
+Amended PrintDebugInfo command to print debug info from current monitors in addition to info from parser.
+Amended Identify command to used ID string defined at top of file.
+Removed delay from PowerOn and PowerOff commands
+Modified getVBus and getCurrent commands to use 0 based counting for INA devices
+Modified ReadADCToBuffer() function to set DETEC_ADC_CS line low and then high for each individual read from ADC
