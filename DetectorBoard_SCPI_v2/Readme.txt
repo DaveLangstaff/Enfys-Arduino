@@ -1,7 +1,7 @@
 
 Detectorboard EGSE commands
 
-Deafult baud rate: 115200
+Deafult baud rate: 57600
 All commands temrinated with cr-lf
 
 Identify Command
@@ -48,24 +48,24 @@ NAME#?			return device name from supply #
 					1: Heater supply INA3221
 					2: +12V supply INA3221
 					3: -12V supply INA260
-					
+TIME?		- gives time in usec for last read operation
+
+BURST#?		- reads OS readings into buffer and returns whole databuffer
+
+DELAY xxxx 	- sets delay between SPI reads in usec
+DELAY?		- returns delay between SPI reads in usec
+
+THROW xxxx	- sets number of readings to throw away at start of each read cycle (0..1024)
+THROW?		- returns number of readings to throw away at start of each read cycle (0..1024)					
+
+HTR:ON		- enable on board heater supply
+HTR:OFF		- disable on-board heater supply
+HTR:DAC xxxx	- set heater DAC (0..4095)
+HTR:DAC?	- return current value of heater DAC
+
+POwer:ON	- Enable power to detector board
+POwer:OFF	- Disable power to detector board
+
+RTD:TEMP?	- get temperature from RTD device
 
 
-					
-  my_instrument.RegisterCommand(F("NAME#?"), &getName);
-  my_instrument.RegisterCommand(F("TIME?"), &getElapsed);
-  my_instrument.RegisterCommand(F("BURST#?"), &ReadADCBurst);
-  my_instrument.RegisterCommand(F("DELAY"), &setSampleDelay);
-  my_instrument.RegisterCommand(F("DELAY?"), &getSampleDelay);
-  my_instrument.RegisterCommand(F("THROW"), &setThrowAway);
-  my_instrument.RegisterCommand(F("THROW?"), &getThrowAway);
-  my_instrument.SetCommandTreeBase(F("HTR"));
-  my_instrument.RegisterCommand(F(":ON"), &HTROn);
-  my_instrument.RegisterCommand(F(":OFF"), &HTROff);
-  my_instrument.RegisterCommand(F(":DAC"), &setHTRDAC);
-  my_instrument.RegisterCommand(F(":DAC?"), &getHTRDAC);
-  my_instrument.SetCommandTreeBase(F("POwer"));
-  my_instrument.RegisterCommand(F(":ON"), &PowerOn);
-  my_instrument.RegisterCommand(F(":OFF"), &PowerOff);
-  my_instrument.SetCommandTreeBase(F("RTD"));
-  my_instrument.RegisterCommand(F(":TEMP?"), &getRTDTemperature);

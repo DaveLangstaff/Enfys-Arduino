@@ -4,24 +4,74 @@ Control code for Enfyf Detector board
 uses Vrekrer SCPI library to parse commands
 
 Commands:
-  *IDN?
-    Gets the instrument's identification string
-  DOut# xxx
-    Sets DAC # to value xxx, where # is in the range of 0..1 and xxx is in the range 0..4095
-  AIn#?
-    Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
-    This is the sum of a buffer full of readings, as set by OS
-  OS xxx
-    Sets oversampling to xxx where xxx is the number of samples to take, in the range 1..MaxDataSize
-  OS?
-    Returns current level of oversampling
-  PO:ON Turns power off
-  PO:OFF Turns power on
-  BURST#? - takes reading and returns whole dataBuffer, length as set by OS
-  TIME? - returns time in usec for last read operation
-  THROW - Sets number of readings to throw away at start of each burst
-  THROW? - Gets number of readings to throw away at start of each burst
+Detectorboard EGSE commands
 
+Deafult baud rate: 57600
+All commands temrinated with cr-lf
+
+Identify Command
+*IDN?    - return identifier string. Eg "Aberystwyth University,Enfys Detector,#01,#05"
+
+Debug Command
+*DBG?	 - returns debugging information on current monitors installed
+
+Analog Input
+AIn#?    - return data from analog inputs (ADC convertor) # is channel 0-7, channel values outside the range 0-7 will return ERR_BAD_SUFFIX -4
+		 - This is a summation of OS individual readings and is returned as an unsigned long int
+
+Set Offset DAC		 
+DOut# param	 - sets DAC on channel # (where channel 0=SWIR, 1=MWIR, any other # returns ERR_BAD_SUFFIX -4)
+             - param is in range 0-4095, values outside this range return ERR_BAD_PARAM -5
+
+
+Oversampling
+OS param	 - set oversampling to param, where param is in the range 1-4096 values outside this range return ERR_BAD_PARAM -5
+OS?			 - returns current value of oversampling
+
+Clock speed
+CLK param    - sets SPI clock speed. Param should be in the range of 1,000,000 to 16,000,000 values outside this range return ERR_BAD_PARAM -5
+CLK?         - return current SPI clock speed
+
+Current and Voltage monitoring
+CURR#?			return current from supply #. 
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply
+					1: Heater supply
+					2: +12V supply
+					3: -12V supply
+				
+VBUS#?			return bus voltage (in mV) from supply #
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply
+					1: Heater supply
+					2: +12V supply
+					3: -12V supply
+					
+NAME#?			return device name from supply #
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply INA3221
+					1: Heater supply INA3221
+					2: +12V supply INA3221
+					3: -12V supply INA260
+TIME?		- gives time in usec for last read operation
+
+BURST#?		- reads OS readings into buffer and returns whole databuffer
+
+DELAY xxxx 	- sets delay between SPI reads in usec
+DELAY?		- returns delay between SPI reads in usec
+
+THROW xxxx	- sets number of readings to throw away at start of each read cycle (0..1024)
+THROW?		- returns number of readings to throw away at start of each read cycle (0..1024)					
+
+HTR:ON		- enable on board heater supply
+HTR:OFF		- disable on-board heater supply
+HTR:DAC xxxx	- set heater DAC (0..4095)
+HTR:DAC?	- return current value of heater DAC
+
+POwer:ON	- Enable power to detector board
+POwer:OFF	- Disable power to detector board
+
+RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
@@ -72,10 +122,11 @@ INA_Class      INA;                      ///< INA class instantiation to use EEP
 #define ClockSpeed 1000000   //1MHz SPI clock (default)
 #define minClk 100000     // 100KHz minimum clock
 #define maxClk 16000000   // 16MHz maximum clock
-#define serialSpeed 115200     // serial baud rate
+#define serialSpeed 57600     // serial baud rate
 #define MaxDataSize 4096
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
 #define MaxThrowAway 4096       // Maximum number of samples to throw away
+#define MaxHeaterDAC 4095       // Maximum value of heater DAC
 unsigned int SWIR_DAC_Value=0;  // DAC for SWIR offset
 unsigned int MWIR_DAC_Value=0;  // DAC for MWIR offset
 unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
@@ -393,8 +444,8 @@ void setHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
   // check parameter is in range
-  if ((param>=0) && (param<=4095)){
-    HTR_DAC_Value=constrain(param,0,4095);   // store the value away
+  if ((param>=0) && (param<=MaxHeaterDAC)){
+    HTR_DAC_Value=constrain(param,0,MaxHeaterDAC);   // store the value away
     SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
     digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
     HTR_DAC_Value=param;
@@ -482,7 +533,7 @@ void getClk(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 
 void setSampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  //use the first parameter to set the oversampling level
+  //use the first parameter to set the delay between SPI reads in usec
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
@@ -576,9 +627,10 @@ void ReadADCtoBuffer(int chan){
     uint16_t control = chan << 11;  // set control word to point to ADC channel
     // throwaway readings first
     for (int i=0;i<throwAway;i++){
-    digitalWrite(DETEC_ADC_CS, LOW);
-      dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
-    digitalWrite(DETEC_ADC_CS, HIGH);
+        digitalWrite(DETEC_ADC_CS, LOW);
+        dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
+        delayMicroseconds(sampleDelay);
+        digitalWrite(DETEC_ADC_CS, HIGH);
     }
     unsigned long startTime = micros();  // record start time
     for (int i=0;i<OSvalue;i++){
