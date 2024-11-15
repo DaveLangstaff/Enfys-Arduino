@@ -626,13 +626,13 @@ void ReadADCtoBuffer(int chan){
     SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
     // throwaway readings first
+    unsigned long startTime = micros();  // record start time
     for (int i=0;i<throwAway;i++){
         digitalWrite(DETEC_ADC_CS, LOW);
         dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
         delayMicroseconds(sampleDelay);
         digitalWrite(DETEC_ADC_CS, HIGH);
     }
-    unsigned long startTime = micros();  // record start time
     for (int i=0;i<OSvalue;i++){
         digitalWrite(DETEC_ADC_CS, LOW);
         dataBuffer[i] = SPI.transfer16(control);
