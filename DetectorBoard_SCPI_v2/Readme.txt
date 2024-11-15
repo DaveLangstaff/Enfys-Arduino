@@ -52,6 +52,9 @@ TIME?		- gives time in usec for last read operation
 
 BURST#?		- reads OS readings into buffer and returns whole databuffer
 
+SCIENCE? -  reads all 8 ADC channels according to current OS and THROW parameters. Sums readings and then shifts to discard lower 4 bits
+         - returns all 8 readings in a comma seperated line
+
 DELAY xxxx 	- sets delay between SPI reads in usec
 DELAY?		- returns delay between SPI reads in usec
 
