@@ -57,6 +57,9 @@ TIME?		- gives time in usec for last read operation
 
 BURST#?		- reads OS readings into buffer and returns whole databuffer
 
+SCIENCE? -  reads all 8 ADC channels according to current OS and THROW parameters. Sums readings and then shifts to discard lower 4 bits
+         - returns all 8 readings in a comma seperated line
+
 DELAY xxxx 	- sets delay between SPI reads in usec
 DELAY?		- returns delay between SPI reads in usec
 
@@ -75,7 +78,7 @@ RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.1,"
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.2,"
 
 #include "Arduino.h"
 
@@ -141,6 +144,7 @@ unsigned int OSvalue=1;
 unsigned int sampleDelay=0;
 
 unsigned int dataBuffer[MaxDataSize];
+unsigned int scienceBuffer[8];        // buffer to hold science readings
 unsigned long Elapsed;
 int throwAway = 0;    // number of readings to throwaway before accumulating in buffer
 
@@ -180,6 +184,7 @@ void setup()
   my_instrument.RegisterCommand(F("DELAY?"), &getSampleDelay);
   my_instrument.RegisterCommand(F("THROW"), &setThrowAway);
   my_instrument.RegisterCommand(F("THROW?"), &getThrowAway);
+  my_instrument.RegisterCommand(F("SCIENCE?"), &getScience);
   my_instrument.SetCommandTreeBase(F("HTR"));
   my_instrument.RegisterCommand(F(":ON"), &HTROn);
   my_instrument.RegisterCommand(F(":OFF"), &HTROff);
@@ -262,6 +267,30 @@ INA.setMode(INA_MODE_CONTINUOUS_BOTH);  // Bus/shunt measured continuously
 void loop()
 {
   my_instrument.ProcessInput(Serial, "\n");
+}
+
+
+void getScience(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    // reads all 8 ADC channels according to current OS and THROW parameters. 
+    // Sums readings and then shifts to discard lower 4 bits
+    // returns all 8 readings in a comma seperated line
+  //interface.println("0,1,2,3,4,5,6,7");
+  unsigned long startTime = micros();    // record start time locally
+  for (int i=0;i<8;i++){
+    ReadADCtoBuffer(i);
+    int summation=0;                 // initialise summation
+    for (int db=0;db<OSvalue;db++){  //loop through the databuffer
+      summation += dataBuffer[db];
+    }
+    scienceBuffer[i] = summation >> 4;  // drop 4 low order bits
+  }
+  for (int i=0;i<7;i++){
+    interface.print(scienceBuffer[i]);
+    interface.print(",");
+  }
+  interface.println(scienceBuffer[7]);
+  Elapsed = micros() - startTime;
+
 }
 
 void PrintDebug(SCPI_C commands, SCPI_P parameters, Stream& interface) {
