@@ -76,7 +76,7 @@ RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.3,"
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.4,"
 
 #include "Arduino.h"
 
@@ -127,9 +127,11 @@ INA_Class      INA;                      ///< INA class instantiation to use EEP
 #define MaxDataSize 4096
 #define MaxSampleDelay 1024     // maximum delay in usec between samples
 #define MaxThrowAway 4096       // Maximum number of samples to throw away
-#define MaxHeaterDAC 4095       // Maximum value of heater DAC
-unsigned int SWIR_DAC_Value=0;  // DAC for SWIR offset
-unsigned int MWIR_DAC_Value=0;  // DAC for MWIR offset
+#define SWIR_DAC_Default 100
+#define MWIR_DAC_Default 100
+
+unsigned int SWIR_DAC_Value=SWIR_DAC_Default;  // DAC for SWIR offset
+unsigned int MWIR_DAC_Value=MWIR_DAC_Default;  // DAC for MWIR offset
 unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
 unsigned int ClkSpeed;
 
@@ -169,6 +171,7 @@ void setup()
   //Use "#" at the end of a token to accept numeric suffixes.
   my_instrument.RegisterCommand(F("AIn#?"), &ReadADC);
   my_instrument.RegisterCommand(F("DOut#"), &WriteDAC);
+  my_instrument.RegisterCommand(F("DOut#?"), &ReadDAC);
   my_instrument.RegisterCommand(F("OS"), &setOS);  
   my_instrument.RegisterCommand(F("OS?"), &getOS);
   my_instrument.RegisterCommand(F("CLK"), &setClk);  
@@ -389,6 +392,15 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(SWIR_DAC_CS,HIGH); 
     digitalWrite(MWIR_DAC_CS,HIGH); 
     digitalWrite(DETEC_ADC_CS,HIGH);
+    digitalWrite(SWIR_DAC_CS, LOW);
+    delayMicroseconds(10);
+    // set DACs to default values
+    SPI.transfer16(SWIR_DAC_Value);
+    digitalWrite(SWIR_DAC_CS, HIGH);
+    digitalWrite(MWIR_DAC_CS, LOW);
+    delayMicroseconds(10);
+    SPI.transfer16(MWIR_DAC_Value);
+    digitalWrite(MWIR_DAC_CS, HIGH);
   
     interface.println(ERR_NO_ERROR);
 }
