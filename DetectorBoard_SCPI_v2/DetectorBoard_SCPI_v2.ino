@@ -68,8 +68,6 @@ THROW?		- returns number of readings to throw away at start of each read cycle (
 
 HTR:ON		- enable on board heater supply
 HTR:OFF		- disable on-board heater supply
-HTR:DAC xxxx	- set heater DAC (0..4095)
-HTR:DAC?	- return current value of heater DAC
 
 POwer:ON	- Enable power to detector board
 POwer:OFF	- Disable power to detector board
@@ -78,7 +76,7 @@ RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.2,"
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.3,"
 
 #include "Arduino.h"
 
@@ -188,8 +186,6 @@ void setup()
   my_instrument.SetCommandTreeBase(F("HTR"));
   my_instrument.RegisterCommand(F(":ON"), &HTROn);
   my_instrument.RegisterCommand(F(":OFF"), &HTROff);
-  my_instrument.RegisterCommand(F(":DAC"), &setHTRDAC);
-  my_instrument.RegisterCommand(F(":DAC?"), &getHTRDAC);
   my_instrument.SetCommandTreeBase(F("POwer"));
   my_instrument.RegisterCommand(F(":ON"), &PowerOn);
   my_instrument.RegisterCommand(F(":OFF"), &PowerOff);
@@ -200,15 +196,16 @@ void setup()
   //Serial.println("Commands registered");
 
   // setup SPI bus
+  // ensure all lines are low prior to power applied to detector board
   ClkSpeed = ClockSpeed;
-  pinMode(DETEC_MOSI, OUTPUT); 
-  pinMode(DETEC_SCK,OUTPUT);
-  pinMode(SWIR_DAC_CS,OUTPUT); digitalWrite(SWIR_DAC_CS,HIGH);
-  pinMode(MWIR_DAC_CS,OUTPUT); digitalWrite(MWIR_DAC_CS,HIGH);
+  digitalWrite(DETEC_MOSI, LOW); pinMode(DETEC_MOSI, OUTPUT); 
+  digitalWrite(DETEC_SCK, LOW); pinMode(DETEC_SCK,OUTPUT);
+  digitalWrite(SWIR_DAC_CS,LOW); pinMode(SWIR_DAC_CS,OUTPUT);
+  digitalWrite(MWIR_DAC_CS,LOW); pinMode(MWIR_DAC_CS,OUTPUT);
+  digitalWrite(DETEC_ADC_CS,LOW); pinMode(DETEC_ADC_CS,OUTPUT);
+  pinMode(DETEC_MISO, INPUT);
   pinMode(TRIG,OUTPUT);  digitalWrite(TRIG,HIGH);
   pinMode(TRIG2,OUTPUT);  digitalWrite(TRIG2,LOW);
-  pinMode(DETEC_ADC_CS,OUTPUT);  digitalWrite(DETEC_ADC_CS,HIGH);
-  pinMode(DETEC_MISO, INPUT);
   //Serial.println("Pins allocated");
 
   SPI.begin();
@@ -222,17 +219,7 @@ void setup()
   pinMode(LED_BLUE, OUTPUT); digitalWrite(LED_BLUE, HIGH); // N LED drive is inverted
 
   // pins for heater control
-  pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, HIGH);    // HTR enable pin, active LOW
-  pinMode(HTR_DAC_CS, OUTPUT); digitalWrite(HTR_DAC_CS, HIGH);  // HTR DAC enable, active low
-  // set heater DAC to 0
-  SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
-  digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
-  HTR_DAC_Value=0;
-  delayMicroseconds(10);
-  SPI.transfer16(0);                   // use 16-bit mode to transfer DAC data
-  digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
-  SPI.endTransaction();
-  //Serial.println("Heater DAC initialised");
+  pinMode(HTR_EN, OUTPUT); digitalWrite(HTR_EN, LOW);    // HTR enable pin, active HIGH
 
   // setup RTD monitor
   RTD_Monitor.begin(MAX31865_2WIRE);
@@ -283,6 +270,7 @@ void getScience(SCPI_C commands, SCPI_P parameters, Stream& interface) {
       summation += dataBuffer[db];
     }
     scienceBuffer[i] = summation >> 4;  // drop 4 low order bits
+  //  scienceBuffer[i] = summation;
   }
   for (int i=0;i<7;i++){
     interface.print(scienceBuffer[i]);
@@ -395,11 +383,20 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(EN_12V, HIGH);     // turn ON 12V power
     //delay(2);
     digitalWrite(EN_3V3, HIGH);    // turn ON 3v3 power
+    delay(1);                      // allow 1ms before turning on SPI bus
     digitalWrite(LED_BLUE, LOW);
+    // once power is on the board, can now pull high SPI bus lines
+    digitalWrite(SWIR_DAC_CS,HIGH); 
+    digitalWrite(MWIR_DAC_CS,HIGH); 
+    digitalWrite(DETEC_ADC_CS,HIGH);
+  
     interface.println(ERR_NO_ERROR);
 }
 
 void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
+    digitalWrite(SWIR_DAC_CS,LOW); 
+    digitalWrite(MWIR_DAC_CS,LOW); 
+    digitalWrite(DETEC_ADC_CS,LOW);
     digitalWrite(EN_3V3, LOW);    // turn OFF 3v3 power
     //delay(1);                       // wait 1ms
     digitalWrite(EN_12V, LOW);    // turn OFF 12v power
@@ -408,12 +405,12 @@ void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void HTROn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(HTR_EN, LOW);
+    digitalWrite(HTR_EN, HIGH);
     interface.println(ERR_NO_ERROR);
 }
 
 void HTROff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-    digitalWrite(HTR_EN, HIGH);
+    digitalWrite(HTR_EN, LOW);
     interface.println(ERR_NO_ERROR);
 }
 
@@ -466,32 +463,6 @@ void getName(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   interface.println(ERR_BAD_SUFFIX);
   }
 } 
-
-void setHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  //use the first parameter to set the 12-bit heater DAC
-  int param = -1;
-  String first_parameter = String(parameters.First());
-  sscanf(first_parameter.c_str(),"%d",&param) ;
-  // check parameter is in range
-  if ((param>=0) && (param<=MaxHeaterDAC)){
-    HTR_DAC_Value=constrain(param,0,MaxHeaterDAC);   // store the value away
-    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
-    digitalWrite(HTR_DAC_CS, LOW);           // select heater DAC
-    HTR_DAC_Value=param;
-    delayMicroseconds(10);
-    SPI.transfer16(param);                   // use 16-bit mode to transfer DAC data
-    digitalWrite(HTR_DAC_CS, HIGH);          // unselect heater DAC
-    SPI.endTransaction();
-    interface.println(ERR_NO_ERROR);         // return success code
-  }  else {
-    interface.println(ERR_BAD_PARAM);        // otherwise return out of range error
-  }
-}
-
-void getHTRDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  //get current value set on Heater DAC
-  interface.println(HTR_DAC_Value);
-}
 
 void getRTDTemperature(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   // read temperature sensor and return as float
@@ -651,6 +622,8 @@ void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void ReadADCtoBuffer(int chan){
+    // toggles trigger line
+    // reads indicated ADC channel to buffer after first performing throwaway on that channel
     trigger();
     SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE0));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
