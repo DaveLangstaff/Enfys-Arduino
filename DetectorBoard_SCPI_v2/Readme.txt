@@ -16,7 +16,8 @@ AIn#?    - return data from analog inputs (ADC convertor) # is channel 0-7, chan
 
 Set Offset DAC		 
 DOut# param	 - sets DAC on channel # (where channel 0=SWIR, 1=MWIR, any other # returns ERR_BAD_SUFFIX -4)
-             - param is in range 0-4095, values outside this range return ERR_BAD_PARAM -5
+             	- param is in range 0-4095, values outside this range return ERR_BAD_PARAM -5
+DOut#? 	 	- returns value previously set on DAC on channel # (where channel 0=SWIR, 1=MWIR, any other # returns ERR_BAD_SUFFIX -4)
 
 
 Oversampling
@@ -63,8 +64,6 @@ THROW?		- returns number of readings to throw away at start of each read cycle (
 
 HTR:ON		- enable on board heater supply
 HTR:OFF		- disable on-board heater supply
-HTR:DAC xxxx	- set heater DAC (0..4095)
-HTR:DAC?	- return current value of heater DAC
 
 POwer:ON	- Enable power to detector board
 POwer:OFF	- Disable power to detector board
