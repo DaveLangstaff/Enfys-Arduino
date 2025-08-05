@@ -76,7 +76,7 @@ RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.4,"
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.6,"
 
 #include "Arduino.h"
 
@@ -146,7 +146,7 @@ unsigned int sampleDelay=0;
 unsigned int dataBuffer[MaxDataSize];
 unsigned int scienceBuffer[8];        // buffer to hold science readings
 unsigned long Elapsed;
-int throwAway = 0;    // number of readings to throwaway before accumulating in buffer
+int throwAway = 1;    // number of readings to throwaway before accumulating in buffer default to 1
 
 // define errors codes to return
 #define ERR_NO_ERROR 0
@@ -392,11 +392,13 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(SWIR_DAC_CS,HIGH); 
     digitalWrite(MWIR_DAC_CS,HIGH); 
     digitalWrite(DETEC_ADC_CS,HIGH);
+    
     digitalWrite(SWIR_DAC_CS, LOW);
     delayMicroseconds(10);
     // set DACs to default values
     SPI.transfer16(SWIR_DAC_Value);
     digitalWrite(SWIR_DAC_CS, HIGH);
+    
     digitalWrite(MWIR_DAC_CS, LOW);
     delayMicroseconds(10);
     SPI.transfer16(MWIR_DAC_Value);
@@ -493,8 +495,8 @@ void setThrowAway(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   int param = -1;
   String first_parameter = String(parameters.First());
   sscanf(first_parameter.c_str(),"%d",&param) ;
-  if ((param>=0) && (param<=MaxThrowAway)){
-    throwAway=constrain(param,0,MaxThrowAway);
+  if ((param>=1) && (param<=MaxThrowAway)){
+    throwAway=constrain(param,1,MaxThrowAway);
     interface.println(ERR_NO_ERROR);
   }  else {
     interface.println(ERR_BAD_PARAM);
@@ -637,23 +639,20 @@ void ReadADCtoBuffer(int chan){
     // toggles trigger line
     // reads indicated ADC channel to buffer after first performing throwaway on that channel
     trigger();
-    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE0));
+    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE3));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
     // throwaway readings first
     unsigned long startTime = micros();  // record start time
+    digitalWrite(DETEC_ADC_CS, LOW);
     for (int i=0;i<throwAway;i++){
-        digitalWrite(DETEC_ADC_CS, LOW);
         dataBuffer[0] = SPI.transfer16(control); // dummy read, will be overwritten in loop
         delayMicroseconds(sampleDelay);
-        digitalWrite(DETEC_ADC_CS, HIGH);
     }
     for (int i=0;i<OSvalue;i++){
-        digitalWrite(DETEC_ADC_CS, LOW);
         dataBuffer[i] = SPI.transfer16(control);
         delayMicroseconds(sampleDelay);
-        digitalWrite(DETEC_ADC_CS, HIGH);
     }
-//    digitalWrite(DETEC_ADC_CS,HIGH);
+    digitalWrite(DETEC_ADC_CS,HIGH);
     Elapsed = micros() - startTime;      // calculted elapsed time
     SPI.endTransaction();
   }
