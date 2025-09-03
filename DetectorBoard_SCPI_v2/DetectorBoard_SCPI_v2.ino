@@ -76,7 +76,7 @@ RTD:TEMP?	- get temperature from RTD device
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
 */
-#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.6,"
+#define ID_STRING "Aberystwyth University,Enfys Detector EGSE,#02.8,"
 
 #include "Arduino.h"
 
@@ -134,6 +134,7 @@ unsigned int SWIR_DAC_Value=SWIR_DAC_Default;  // DAC for SWIR offset
 unsigned int MWIR_DAC_Value=MWIR_DAC_Default;  // DAC for MWIR offset
 unsigned int HTR_DAC_Value=0;   // DAC for on-board heater
 unsigned int ClkSpeed;
+byte powerOn = 0;				// indicates powerOn/Off status. Off=0
 
 Adafruit_MAX31865 RTD_Monitor = Adafruit_MAX31865(RTD_MON_CS);  // define RTD monitor object
 #define RREF 4020.0
@@ -262,7 +263,8 @@ void loop()
 
 void getScience(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     // reads all 8 ADC channels according to current OS and THROW parameters. 
-    // Sums readings and then shifts to discard lower 4 bits
+    // Sums readings and 
+    // (**then shifts to discard lower 4 bits**)
     // returns all 8 readings in a comma seperated line
   //interface.println("0,1,2,3,4,5,6,7");
   unsigned long startTime = micros();    // record start time locally
@@ -272,8 +274,8 @@ void getScience(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     for (int db=0;db<OSvalue;db++){  //loop through the databuffer
       summation += dataBuffer[db];
     }
-    scienceBuffer[i] = summation >> 4;  // drop 4 low order bits
-  //  scienceBuffer[i] = summation;
+  //  scienceBuffer[i] = summation >> 4;  // drop 4 low order bits
+    scienceBuffer[i] = summation;
   }
   for (int i=0;i<7;i++){
     interface.print(scienceBuffer[i]);
@@ -393,6 +395,10 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(MWIR_DAC_CS,HIGH); 
     digitalWrite(DETEC_ADC_CS,HIGH);
     
+    // set up SPI bus for writing to DAC
+    SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
+    digitalWrite(DETEC_SCK, LOW);
+
     digitalWrite(SWIR_DAC_CS, LOW);
     delayMicroseconds(10);
     // set DACs to default values
@@ -403,6 +409,11 @@ void PowerOn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     delayMicroseconds(10);
     SPI.transfer16(MWIR_DAC_Value);
     digitalWrite(MWIR_DAC_CS, HIGH);
+    // close down SPI bus
+    digitalWrite(DETEC_SCK, HIGH);
+    delayMicroseconds(5);
+    SPI.endTransaction();
+	  powerOn = 1;
   
     interface.println(ERR_NO_ERROR);
 }
@@ -416,6 +427,7 @@ void PowerOff(SCPI_C commands, SCPI_P parameters, Stream& interface) {
     digitalWrite(EN_12V, LOW);    // turn OFF 12v power
     digitalWrite(LED_BLUE, HIGH);
     interface.println(ERR_NO_ERROR);
+	  powerOn = 0;
 }
 
 void HTROn(SCPI_C commands, SCPI_P parameters, Stream& interface) {
@@ -480,7 +492,12 @@ void getName(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 
 void getRTDTemperature(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   // read temperature sensor and return as float
-  interface.println(RTD_Monitor.temperature(RNOMINAL,RREF));
+  if (powerOn !=0){
+		digitalWrite(DETEC_SCK, LOW);
+  		interface.println(RTD_Monitor.temperature(RNOMINAL,RREF));
+   } else {
+   		interface.println(0);
+	}
 }
 
 void trigger() {
@@ -570,49 +587,53 @@ void getSampleDelay(SCPI_C commands, SCPI_P parameters, Stream& interface) {
 }
 
 void WriteDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
-  //Get the numeric suffix/index (if any) from the commands
-  String header = String(commands.Last());
-  header.toUpperCase();
-  int suffix = -1;
-  sscanf(header.c_str(),"%*[DOUT]%u", &suffix);
-
-  //If the suffix is valid,
-  if ( (suffix >= 0) && (suffix < 2) ) {
-    //use the first parameter (if valid) to set the digital Output
-    int param = -1;
-    String first_parameter = String(parameters.First());
-    sscanf(first_parameter.c_str(),"%d",&param) ;
-    if ((param>0)&&(param<=4095)) {  // if the parameter is in range, then set the DAC
-      param=constrain(param,0,4095);
-      trigger();
-      SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
-      switch (suffix) {
-        case 0:
-          digitalWrite(SWIR_DAC_CS, LOW);
-          SWIR_DAC_Value=param;
-          delayMicroseconds(10);
-          SPI.transfer16(param);
-          digitalWrite(SWIR_DAC_CS, HIGH);
-          break;
-        case 1:
-          digitalWrite(MWIR_DAC_CS, LOW);
-          MWIR_DAC_Value=param;
-          delayMicroseconds(10);
-          SPI.transfer16(param);
-          digitalWrite(MWIR_DAC_CS, HIGH);
-          break;
-      }
-      delayMicroseconds(5);
-      SPI.endTransaction();
+  if (powerOn==0) {
       interface.println(ERR_NO_ERROR);
-    } else{
-      interface.println(ERR_BAD_PARAM);  // if paramter is out of range, print error code
+	} else {
+    //Get the numeric suffix/index (if any) from the commands
+    String header = String(commands.Last());
+    header.toUpperCase();
+    int suffix = -1;
+    sscanf(header.c_str(),"%*[DOUT]%u", &suffix);
+
+    //If the suffix is valid,
+    if ( (suffix >= 0) && (suffix < 2) ) {
+      //use the first parameter (if valid) to set the digital Output
+      int param = -1;
+      String first_parameter = String(parameters.First());
+      sscanf(first_parameter.c_str(),"%d",&param) ;
+      if ((param>0)&&(param<=4095)) {  // if the parameter is in range, then set the DAC
+        param=constrain(param,0,4095);
+        trigger();
+        SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE1));
+        SPI.transfer16(0);
+      switch (suffix) {
+          case 0:
+            digitalWrite(SWIR_DAC_CS, LOW);
+            SWIR_DAC_Value=param;
+            delayMicroseconds(10);
+            SPI.transfer16(param);
+            digitalWrite(SWIR_DAC_CS, HIGH);
+            break;
+          case 1:
+            digitalWrite(MWIR_DAC_CS, LOW);
+            MWIR_DAC_Value=param;
+            delayMicroseconds(10);
+            SPI.transfer16(param);
+            digitalWrite(MWIR_DAC_CS, HIGH);
+            break;
+        }
+        delayMicroseconds(5);
+        SPI.endTransaction();
+        interface.println(ERR_NO_ERROR);
+      } else{
+        interface.println(ERR_BAD_PARAM);  // if paramter is out of range, print error code
+      }
+    } else {
+      interface.println(ERR_BAD_SUFFIX);    // if suffix is out of range, print error code
     }
-  } else {
-    interface.println(ERR_BAD_SUFFIX);    // if suffix is out of range, print error code
   }
 }
-
 void ReadDAC(SCPI_C commands, SCPI_P parameters, Stream& interface) {
   //Get the numeric suffix/index (if any) from the commands
   String header = String(commands.Last());
@@ -639,8 +660,11 @@ void ReadADCtoBuffer(int chan){
     // toggles trigger line
     // reads indicated ADC channel to buffer after first performing throwaway on that channel
     trigger();
+    if (powerOn == 0) return;
     SPI.beginTransaction(SPISettings(ClkSpeed, MSBFIRST, SPI_MODE3));
     uint16_t control = chan << 11;  // set control word to point to ADC channel
+    dataBuffer[0] = SPI.transfer16(0); // dummy read, will be overwritten in loop
+    //digitalWrite(DETEC_SCK, HIGH); // pinMode(DETEC_SCK,OUTPUT);
     // throwaway readings first
     unsigned long startTime = micros();  // record start time
     digitalWrite(DETEC_ADC_CS, LOW);
