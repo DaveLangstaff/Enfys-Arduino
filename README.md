@@ -6,56 +6,73 @@ Dave Langstaff dpl@aber.ac.uk
 
 
 Code runs on Arduino nano esp 32
+Detectorboard EGSE commands
 
+Deafult baud rate: 57600
+All commands temrinated with cr-lf
 
-Commands:
+Identify Command
+*IDN?    - return identifier string. Eg "Aberystwyth University,Enfys Detector,#01,#05"
 
-  *IDN? - Gets the instrument's identification string
-    
-  *DBG? - Print out debug information on SCIP parser and INA bus monitors
-    
-  DOut# xxx - Sets DAC # to value xxx, where # is in the range of 0..1 and xxx is in the range 0..4095
-    
-  AIn#? - Reads ADC value from ADC channel #, where # is in the range 0..7. Value returned is in the range 0..4095
-    This is the sum of a buffer full of readings, as set by OS
-    
-  OS xxx - Sets oversampling to 2^xxx, where x is in the range 0 to 10 corresponding to oversampling of 1,2,4,8...1024
-  OS? -    Returns current level of oversampling
-    
-  POwer:ON - Turns power off
-  
-  POwer:OFF - Turns power on
-  
-  BURST#? - takes reading and returns whole dataBuffer, length as set by OS
-  
-  TIME? - returns time in usec for last read operation
-    
-  THROW xxx - Sets number of readings to throw away at start of each burst
-   
-  THROW? - Gets number of readings to throw away at start of each burst
+Debug Command
+*DBG?	 - returns debugging information on current monitors installed
 
-  CURR#? - Returns current on bus number # (3v3, +12V, Heater, -12V)
+Analog Input
+AIn#?    - return data from analog inputs (ADC convertor) # is channel 0-7, channel values outside the range 0-7 will return ERR_BAD_SUFFIX -4
+		 - This is a summation of OS individual readings and is returned as an unsigned long int
 
-  VBUS#? - Returns current on bus number # (3v3, +12V, Heater, -12V) 
+Set Offset DAC		 
+DOut# param	 - sets DAC on channel # (where channel 0=SWIR, 1=MWIR, any other # returns ERR_BAD_SUFFIX -4)
+             - param is in range 0-4095, values outside this range return ERR_BAD_PARAM -5
 
-  NAME#? - Returns name of INA device used for monitoring bus#
+Oversampling
+OS param	 - set oversampling to param, where param is in the range 1-4096 values outside this range return ERR_BAD_PARAM -5
+OS?			 - returns current value of oversampling
 
-  DELAY xxx - Sets time in usec to delay after each reading
+Clock speed
+CLK param    - sets SPI clock speed. Param should be in the range of 1,000,000 to 16,000,000 values outside this range return ERR_BAD_PARAM -5
+CLK?         - return current SPI clock speed
 
-  DELAY? - Returns time in usec to delay after each reading
+Current and Voltage monitoring
+CURR#?			return current from supply #. 
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply
+					1: Heater supply
+					2: +12V supply
+					3: -12V supply
+				
+VBUS#?			return bus voltage (in mV) from supply #
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply
+					1: Heater supply
+					2: +12V supply
+					3: -12V supply
+					
+NAME#?			return device name from supply #
+					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+					0: 3.3V supply INA3221
+					1: Heater supply INA3221
+					2: +12V supply INA3221
+					3: -12V supply INA260
+TIME?		- gives time in usec for last read operation
 
-  HTR: ON - turn on board heater current
+BURST#?		- reads OS readings into buffer and returns whole databuffer
 
-  HTR: OFF - turn off board heater current
+SCIENCE? -  reads all 8 ADC channels according to current OS and THROW parameters. Sums readings and then shifts to discard lower 4 bits
+         - returns all 8 readings in a comma seperated line
 
-  HTR:DAC xxx - set heater DAC (0..4095)
+DELAY xxxx 	- sets delay between SPI reads in usec
+DELAY?		- returns delay between SPI reads in usec
 
-  HTR:DAC? - get heater DAC (0..4095)
-  
-  CLK xxx  -  set SPI clock value in Hz (100,000 - 16,000,000)
+THROW xxxx	- sets number of readings to throw away at start of each read cycle (0..1024)
+THROW?		- returns number of readings to throw away at start of each read cycle (0..1024)					
 
-  CLK?   -  get SPI clock value in Hz (100,000 - 16,000,000)
+HTR:ON		- enable on board heater supply
+HTR:OFF		- disable on-board heater supply
 
-  RTD:TEMP? - get temperature from RTD controller
-  
-  
+POwer:ON	- Enable power to detector board
+POwer:OFF	- Disable power to detector board
+
+RTD:TEMP?	- get temperature from RTD device
+  all commands will return either the requested data (? commands) 
+  or an error code indicating successful or otherwise completion
