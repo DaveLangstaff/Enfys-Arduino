@@ -87,17 +87,22 @@ SCIENCE? -  reads all 8 ADC channels according to current OS and THROW parameter
          - returns all 8 readings in a comma seperated line
 
 DELAY xxxx 	- sets delay between SPI reads in usec
+
 DELAY?		- returns delay between SPI reads in usec
 
 THROW xxxx	- sets number of readings to throw away at start of each read cycle (0..1024)
+
 THROW?		- returns number of readings to throw away at start of each read cycle (0..1024)					
 
 HTR:ON		- enable on board heater supply
+
 HTR:OFF		- disable on-board heater supply
 
 POwer:ON	- Enable power to detector board
+
 POwer:OFF	- Disable power to detector board
 
 RTD:TEMP?	- get temperature from RTD device
+
   all commands will return either the requested data (? commands) 
   or an error code indicating successful or otherwise completion
