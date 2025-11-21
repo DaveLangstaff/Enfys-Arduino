@@ -35,10 +35,12 @@ OS param	 - set oversampling to param, where param is in the range 1-4096 values
 OS?			 - returns current value of oversampling
 
 Clock speed
+
 CLK param    - sets SPI clock speed. Param should be in the range of 1,000,000 to 16,000,000 values outside this range return ERR_BAD_PARAM -5
 CLK?         - return current SPI clock speed
 
 Current and Voltage monitoring
+
 CURR#?			return current from supply #. 
 					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
 					0: 3.3V supply
@@ -46,6 +48,7 @@ CURR#?			return current from supply #.
 					2: +12V supply
 					3: -12V supply
 				
+
 VBUS#?			return bus voltage (in mV) from supply #
 					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
 					0: 3.3V supply
