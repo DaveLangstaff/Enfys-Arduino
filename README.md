@@ -12,20 +12,25 @@ Deafult baud rate: 57600
 All commands temrinated with cr-lf
 
 Identify Command
+
 *IDN?    - return identifier string. Eg "Aberystwyth University,Enfys Detector,#01,#05"
 
 Debug Command
+
 *DBG?	 - returns debugging information on current monitors installed
 
 Analog Input
+
 AIn#?    - return data from analog inputs (ADC convertor) # is channel 0-7, channel values outside the range 0-7 will return ERR_BAD_SUFFIX -4
 		 - This is a summation of OS individual readings and is returned as an unsigned long int
 
 Set Offset DAC		 
+
 DOut# param	 - sets DAC on channel # (where channel 0=SWIR, 1=MWIR, any other # returns ERR_BAD_SUFFIX -4)
              - param is in range 0-4095, values outside this range return ERR_BAD_PARAM -5
 
 Oversampling
+
 OS param	 - set oversampling to param, where param is in the range 1-4096 values outside this range return ERR_BAD_PARAM -5
 OS?			 - returns current value of oversampling
 
