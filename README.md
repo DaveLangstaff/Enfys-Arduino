@@ -54,11 +54,16 @@ CURR#?			return current from supply #.
 					
 				
 
-VBUS#?			return bus voltage (in mV) from supply #
+VBUS#?			return bus voltage (in mV) from supply 
+#
 					# is in the range 0-3 values outside the range 0-3 will return ERR_BAD_SUFFIX -4
+
 					0: 3.3V supply
+
 					1: Heater supply
+
 					2: +12V supply
+
 					3: -12V supply
 					
 NAME#?			return device name from supply #
@@ -67,6 +72,8 @@ NAME#?			return device name from supply #
 					1: Heater supply INA3221
 					2: +12V supply INA3221
 					3: -12V supply INA260
+
+
 TIME?		- gives time in usec for last read operation
 
 BURST#?		- reads OS readings into buffer and returns whole databuffer
